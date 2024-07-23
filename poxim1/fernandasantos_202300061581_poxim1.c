@@ -80,9 +80,24 @@ int main()
                 R[z] = R[x] / i;
             }
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if (i == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            // Tirar duvida sobre a notação
+            // if ( )
+            // {
+            //     R[31] |= OV;
+            // }
+
             sprintf(instrucao, "divi r%u,r%u,%u", z, x, i);
 
-            // setar as flags
             printf("0x%08X:\t%-25s\tR%u=R%u/0x%08X=0x%08X,SR=\n", R[29], instrucao, z, x, i, R[z]);
             break;
 
@@ -90,9 +105,9 @@ int main()
         case 0b000001:
 
             z = (R[28] & (0b11111 << 21)) >> 21;
-            xyl = R[28] & 0x1FFFFFF;
+            uint32_t xyl = R[28] & 0x1FFFFF;
 
-            R[z] = (((xyl << 24) & 1) * 0b11111111111) + xyl;
+            R[z] = xyl;
 
             sprintf(instrucao, "movs r%u,%u", z, xyl);
             printf("0x%08X:\t%-25s\tR%u=0x%08X\n", R[29], instrucao, z, R[z]);
@@ -283,10 +298,11 @@ int main()
                 R[31] |= ZN;
             }
 
-            // if (((R[x] ^ i) & (1 << 31)) && ((R[z] ^ R[x]) & (1 << 31)))
-            // {
-            //     R[31] |= OV;
-            // }
+            // Tirar duvida
+            //  if ()
+            //  {
+            //      R[31] |= OV;
+            //  }
 
             sprintf(instrucao, "muli r%u,r%u,r%u", z, x, i);
             printf("0x%08X:\t%-25s\tR%u=R%u*0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
@@ -299,6 +315,22 @@ int main()
             i = R[28] & 0xFFFF;
 
             R[z] = R[x] % i;
+
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if (i == 0)
+            {
+                R[31] |= ZD;
+            }
+
+            // tirar duvida
+            //  if ()
+            //  {
+            //      R[31] |= OV;
+            //  }
 
             sprintf(instrucao, "muli r%u,r%u,r%u", z, x, i);
             printf("0x%08X:\t%-25s\tR%u=R%u\%0x%08X=0x%08X\n", R[29], instrucao, z, x, i, R[z]);
@@ -337,6 +369,33 @@ int main()
 
         // cmpI
         case 0b010111:
+            x = (R[28] & (0b11111 << 16)) >> 16;
+            i = R[28] & 0xFFFF;
+
+            uint32_t CMPI = R[x] - i;
+
+            if (CMPI == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((CMPI & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
+            if (CMPI & (1 << 32))
+            {
+                R[31] |= CY;
+            }
+
+            if (((R[x] ^ i) & (1 << 31)) && ((CMPI ^ R[x]) & (1 << 31)))
+            {
+                R[31] |= OV;
+            }
+
+            sprintf(instrucao, "subi r%u,r%u,r%u", z, x, i);
+            printf("0x%08X:\t%-25s\tR%u=R%u-0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
             break;
 
         // and
@@ -347,9 +406,19 @@ int main()
 
             R[z] = R[x] & R[y];
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
             sprintf(instrucao, "and r%u,r%u,r%u", z, x, y);
             // Formatacao de saida em tela (deve mudar para o arquivo de saida)
-            printf("0x%08X:\t%-25s\tR%u=R%u&R%u=0x%08X\n", R[29], instrucao, z, x, y, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u&R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
             break;
 
         // or
@@ -360,9 +429,19 @@ int main()
 
             R[z] = R[x] | R[y];
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
             sprintf(instrucao, "or r%u,r%u,r%u", z, x, y);
             // Formatacao de saida em tela (deve mudar para o arquivo de saida)
-            printf("0x%08X:\t%-25s\tR%u=R%u|R%u=0x%08X\n", R[29], instrucao, z, x, y, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u|R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
             break;
 
         // not
@@ -372,9 +451,19 @@ int main()
 
             R[z] = ~R[x];
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
             sprintf(instrucao, "not r%u,r%u", z, x);
             // Formatacao de saida em tela (deve mudar para o arquivo de saida)
-            printf("0x%08X:\t%-25s\tR%u=~R%u=0x%08X\n", R[29], instrucao, z, x, y, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=~R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
             break;
 
         // xor
@@ -385,137 +474,276 @@ int main()
 
             R[z] = R[x] ^ R[y];
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
             sprintf(instrucao, "xor r%u,r%u,r%u", z, x, y);
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
-            printf("0x%08X:\t%-25s\tR%u=R%u^R%u=0x%08X\n", R[29], instrucao, z, x, y, R[z]);
+
+            printf("0x%08X:\t%-25s\tR%u=R%u^R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
             break;
 
         // l8
         case 0b011000:
-            // Otendo operandos
+
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
             i = R[28] & 0xFFFF;
 
             R[z] = (((uint8_t *)(&MEM32[(R[x] + i) >> 2]))[3 - ((R[x] + i) % 4)]);
-            // Formatacao da instrucao
+
             sprintf(instrucao, "l8 r%u,[r%u%s%i]", z, x, (i >= 0) ? ("+") : (""), i);
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
+
             printf("0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%02X\n", R[29], instrucao, z, R[x] + i, R[z]);
             break;
 
         // l16
         case 0b011001:
+            z = (R[28] & (0b11111 << 21)) >> 21;
+            x = (R[28] & (0b11111 << 16)) >> 16;
+            i = R[28] & 0xFFFF;
+
+            R[z] = ((uint16_t *)(&MEM32[(R[x] + i) >> 1]))[1 - ((R[x] + i) % 2)];
+
+            sprintf(instrucao, "l16 r%u,[r%u%s%i]", z, x, (i >= 0) ? ("+") : (""), i);
+
+            printf("0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%02X\n", R[29], instrucao, z, (R[x] + i) << 1, R[z]);
             break;
 
         // l32
         case 0b011010:
-            // Otendo operandos
+
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
             i = R[28] & 0xFFFF;
-            // Execucao do comportamento com MEM8 e MEM32
+
             R[z] = MEM32[R[x] + i];
-            // Formatacao da instrucao
+
             sprintf(instrucao, "l32 r%u,[r%u%s%i]", z, x, (i >= 0) ? ("+") : (""), i);
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
+
             printf("0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%08X\n", R[29], instrucao, z, (R[x] + i) << 2, R[z]);
             break;
 
         // s8
         case 0b011011:
+            z = (R[28] & (0b11111 << 21)) >> 21;
+            x = (R[28] & (0b11111 << 16)) >> 16;
+            i = R[28] & 0xFFFF;
+
+            (((uint8_t *)(&MEM32[(R[x] + i) >> 2]))[3 - ((R[x] + i) % 4)]) = R[z];
+
+            sprintf(instrucao, "s8 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
+
+            printf("0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%02X\n", R[29], instrucao, R[x] + i, z, R[z]);
             break;
 
         // s16
         case 0b011100:
+            z = (R[28] & (0b11111 << 21)) >> 21;
+            x = (R[28] & (0b11111 << 16)) >> 16;
+            i = R[28] & 0xFFFF;
+
+            ((uint16_t *)(&MEM32[(R[x] + i) >> 1]))[1 - ((R[x] + i) % 2)] = R[z];
+
+            sprintf(instrucao, "s16 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
+
+            printf("0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%02X\n", R[29], instrucao, (R[x] + i) << 1, z, R[z]);
             break;
 
         // s32
         case 0b011101:
+            z = (R[28] & (0b11111 << 21)) >> 21;
+            x = (R[28] & (0b11111 << 16)) >> 16;
+            i = R[28] & 0xFFFF;
+
+            MEM32[R[x] + i] = R[z];
+
+            sprintf(instrucao, "s32 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
+
+            printf("0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%08X\n", R[29], instrucao, (R[x] + i) << 2, z, R[z]);
             break;
 
         // bae
         case 0b101010:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bae %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bat
         case 0b101011:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bat %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bbe
         case 0b101100:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bbe %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bbt
         case 0b101101:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bbt %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // beq
         case 0b101110:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "beq %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bge
         case 0b101111:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bge %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bgt
         case 0b110000:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bgt %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // biv
         case 0b110001:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "biv %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // ble
         case 0b110010:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "ble %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bit
         case 0b110011:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bit %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bne
         case 0b110100:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bne %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bni
         case 0b110101:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bni %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bnz
         case 0b110110:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bnz %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bun
         case 0b110111:
-            // Armazenando o PC antigo
             pc = R[29];
-            // Execucao do comportamento
+
             R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
-            // Formatacao da instrucao
+
             sprintf(instrucao, "bun %i", R[28] & 0x3FFFFFF);
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
+
             printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // bzd
         case 0b111000:
+            pc = R[29];
+
+            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+
+            sprintf(instrucao, "bzd %i", R[28] & 0x3FFFFFF);
+
+            printf("0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // int
         case 0b111111:
-            // Parar a execucao
             executa = 0;
-            // Formatacao da instrucao
             sprintf(instrucao, "int 0");
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
             printf("0x%08X:\t%-25s\tCR=0x00000000,PC=0x00000000\n", R[29], instrucao);
             break;
+
         // Instrucao desconhecida
         default:
-            // Exibindo mensagem de erro
             printf("Instrucao desconhecida!\n");
-            // Parar a execucao
             executa = 0;
         }
         R[29] = R[29] + 4;
