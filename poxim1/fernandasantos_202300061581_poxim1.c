@@ -2,6 +2,16 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#define ZN (1 << 6)
+#define CY (1 << 0)
+#define OV (1 << 3)
+#define SN (1 << 4)
+#define ZD (1 << 5)
+#define IC (1 << 2)
+
+// R[31] |= CY;    // Define o bit como 1
+// R[31] &= ~CY;     // Define o bit como 0
+
 int main()
 {
     FILE *input = fopen("1_erro.hex", "r");
@@ -96,8 +106,28 @@ int main()
 
             R[z] = R[x] + R[y];
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
+            if (R[z] & (1 << 32))
+            {
+                R[31] |= CY;
+            }
+
+            if (((R[x] ^ R[y]) & (1 << 31)) && ((R[z] ^ R[x]) & (1 << 31)))
+            {
+                R[31] |= OV;
+            }
+
             sprintf(instrucao, "add r%u,r%u,r%u", z, x, y);
-            printf("0x%08X:\t%-25s\tR%u=R%u+R%u=0x%08X\n", R[29], instrucao, z, x, y, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u+R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
             break;
 
         // addI
@@ -108,8 +138,28 @@ int main()
 
             R[z] = R[x] + i;
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
+            if (R[z] & (1 << 32))
+            {
+                R[31] |= CY;
+            }
+
+            if (((R[x] == i) & (1 << 31)) && ((R[z] ^ R[x]) & (1 << 31)))
+            {
+                R[31] |= OV;
+            }
+
             sprintf(instrucao, "addi r%u,r%u,r%u", z, x, i);
-            printf("0x%08X:\t%-25s\tR%u=R%u+0x%08X=0x%08X\n", R[29], instrucao, z, x, i, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u+0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
             break;
 
         // sub
@@ -120,8 +170,28 @@ int main()
 
             R[z] = R[x] - R[y];
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
+            if (R[z] & (1 << 32))
+            {
+                R[31] |= CY;
+            }
+
+            if (((R[x] ^ R[y]) & (1 << 31)) && ((R[z] ^ R[x]) & (1 << 31)))
+            {
+                R[31] |= OV;
+            }
+
             sprintf(instrucao, "sub r%u,r%u,r%u", z, x, y);
-            printf("0x%08X:\t%-25s\tR%u=R%u-R%u=0x%08X\n", R[29], instrucao, z, x, y, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u-R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
             break;
 
         // subI
@@ -131,8 +201,28 @@ int main()
             i = R[28] & 0xFFFF;
             R[z] = R[x] - i;
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((R[z] & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
+            if (R[z] & (1 << 32))
+            {
+                R[31] |= CY;
+            }
+
+            if (((R[x] ^ i) & (1 << 31)) && ((R[z] ^ R[x]) & (1 << 31)))
+            {
+                R[31] |= OV;
+            }
+
             sprintf(instrucao, "subi r%u,r%u,r%u", z, x, i);
-            printf("0x%08X:\t%-25s\tR%u=R%u-0x%08X=0x%08X\n", R[29], instrucao, z, x, i, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u-0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
             break;
 
         // caso variado
@@ -188,8 +278,18 @@ int main()
 
             R[z] = R[x] * i;
 
+            if (R[z] == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            // if (((R[x] ^ i) & (1 << 31)) && ((R[z] ^ R[x]) & (1 << 31)))
+            // {
+            //     R[31] |= OV;
+            // }
+
             sprintf(instrucao, "muli r%u,r%u,r%u", z, x, i);
-            printf("0x%08X:\t%-25s\tR%u=R%u*0x%08X=0x%08X\n", R[29], instrucao, z, x, i, R[z]);
+            printf("0x%08X:\t%-25s\tR%u=R%u*0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
             break;
 
         // modI
@@ -211,8 +311,28 @@ int main()
 
             uint32_t CMP = R[x] - R[y];
 
+            if (CMP == 0)
+            {
+                R[31] |= ZN;
+            }
+
+            if ((CMP & (1 << 31)))
+            {
+                R[31] |= SN;
+            }
+
+            if (CMP & (1 << 32))
+            {
+                R[31] |= CY;
+            }
+
+            if (((R[x] ^ R[y]) & (1 << 31)) && ((R[x] ^ CMP) & (1 << 31)))
+            {
+                R[31] |= OV;
+            }
+
             sprintf(instrucao, "cmp r%u,r%u", z, x);
-            printf("0x%08X:\t%-25s\tR%u=R%u\%0x%08X=0x%08X\n", R[29], instrucao, z, x, i, R[z]);
+            printf("0x%08X:\t%-25s\tSR=0x%08X\n", R[29], instrucao, R[31]);
             break;
 
         // cmpI
