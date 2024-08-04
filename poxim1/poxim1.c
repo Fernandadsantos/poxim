@@ -53,10 +53,10 @@ int calcQtdRegistradores(int v, int w, int x, int y, int z)
     }
 }
 
-int main()
+int main(int argc, char *argv[])
 {
-    FILE *input = fopen("1_erro.hex", "r");
-    FILE *output = fopen("output.txt", "w");
+    FILE *input = fopen(argv[1], "r");
+    FILE *output = fopen(argv[2], "w");
     if (input == NULL)
     {
         perror("Erro ao abrir o arquivo");
@@ -104,14 +104,11 @@ int main()
         {
         // mov
         case 0b000000:
-            // Obtendo operandos
             z = (R[28] & (0b11111 << 21)) >> 21;
             xyl = R[28] & 0x1FFFFF;
-            // Execucao do comportamento
             R[z] = xyl;
-            // Formatacao da instrucao
+
             sprintf(instrucao, "mov r%u,%u", z, xyl);
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
             fprintf(output, "0x%08X:\t%-25s\tR%u=0x%08X\n", R[29], instrucao, z, xyl);
             break;
 
@@ -1049,7 +1046,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bae = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (!CY)
+            if (!((R[31] >> CY) & 1))
             {
                 R[29] = R[29] + 4 + aux_bae;
             }
@@ -1064,7 +1061,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bat = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (!ZN && !CY)
+            if (!((R[31] >> ZN) & 1) && !((R[31] >> CY) & 1))
             {
                 R[29] = R[29] + 4 + aux_bat;
             }
@@ -1079,7 +1076,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bbe = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (ZN || CY)
+            if (((R[31] >> ZN) & 1) || ((R[31] >> CY) & 1))
             {
                 R[29] = R[29] + 4 + aux_bbe;
             }
@@ -1095,7 +1092,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bbt = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (ZN || CY)
+            if (((R[31] >> CY) & 1))
             {
                 R[29] = R[29] + 4 + aux_bbt;
             }
@@ -1111,13 +1108,13 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_beq = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (ZN)
+            if ((R[31] >> ZN) & 1)
             {
                 R[29] = R[29] + 4 + aux_beq;
             }
 
-            sprintf(instrucao, "beq %i", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            sprintf(instrucao, "beq %i  ", R[28] & 0x3FFFFFF);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X \n", pc, instrucao, R[29]);
 
             break;
 
@@ -1127,12 +1124,12 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bge = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (SN == OV)
+            if (((R[31] >> SN) & 1) == ((R[31] >> OV) & 1))
             {
                 R[29] = R[29] + 4 + aux_bge;
             }
 
-            sprintf(instrucao, "bge %i", R[28] & 0x3FFFFFF);
+            sprintf(instrucao, "bge %i ", R[28] & 0x3FFFFFF);
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
 
             break;
@@ -1143,12 +1140,12 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bgt = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if ((ZN == 0) && (SN == OV))
+            if ((((R[31] >> ZN) & 1) == 0) && (((R[31] >> SN) & 1) == ((R[31] >> OV) & 1)))
             {
                 R[29] = R[29] + 4 + aux_bgt;
             }
 
-            sprintf(instrucao, "bget %i", R[28] & 0x3FFFFFF);
+            sprintf(instrucao, "bgt %i", R[28] & 0x3FFFFFF);
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
             break;
 
@@ -1170,7 +1167,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_ble = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (ZN && (SN != OV))
+            if (((R[31] >> ZN) & 1) && (((R[31] >> SN) & 1) != ((R[31] >> OV) & 1)))
             {
                 R[29] = R[29] + 4 + aux_ble;
             }
@@ -1185,7 +1182,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_blt = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (SN != OV)
+            if (((R[31] >> SN) & 1) != ((R[31] >> OV) & 1))
             {
                 R[29] = R[29] + 4 + aux_blt;
             }
@@ -1201,7 +1198,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bne = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (!(R[31] & ZN))
+            if (!((R[31] >> ZN) & 1))
             {
                 R[29] = R[29] + (aux_bne << 2);
             }
@@ -1217,7 +1214,7 @@ int main()
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bni = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (!ZN)
+            if (!((R[31] >> OV) & 1))
             {
                 R[29] = R[29] + 4 + aux_bni;
             }
@@ -1231,7 +1228,11 @@ int main()
         case 0b110110:
             pc = R[29];
 
-            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+            if (!((R[31] >> ZD) & 1))
+            {
+
+                R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+            }
 
             sprintf(instrucao, "bnz %i", R[28] & 0x3FFFFFF);
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
