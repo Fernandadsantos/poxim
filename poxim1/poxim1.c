@@ -2,46 +2,90 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 
 #define ZN (1 << 6)
 #define CY (1 << 0)
 #define OV (1 << 3)
 #define SN (1 << 4)
 #define ZD (1 << 5)
-#define IC (1 << 2)
+#define IV (1 << 2)
 
 #define IR 28
 #define PC 29
 #define SP 30
 #define SR 31
 
+char *strRegistrador(int num, int type)
+{
+    char *result = (char *)malloc(10 * sizeof(char));
+    if (result == NULL)
+    {
+        return NULL;
+    }
+
+    if (num < 28 || num > 31)
+    {
+        snprintf(result, 10, "%c%d", type ? 'r' : 'R', num);
+        return result;
+    }
+
+    switch (num)
+    {
+    case 28:
+        strcpy(result, type ? "ir" : "IR");
+        break;
+    case 29:
+        strcpy(result, type ? "pc" : "PC");
+        break;
+    case 30:
+        strcpy(result, type ? "sp" : "SP");
+        break;
+    case 31:
+        strcpy(result, type ? "sr" : "SR");
+        break;
+    default:
+        snprintf(result, 10, "%c%d", type ? 'r' : 'R', num);
+    }
+
+    return result;
+}
+
 int calcQtdRegistradores(int v, int w, int x, int y, int z)
 {
-    int resultado = 0;
+    int resultado = 1;
     int aux = v;
     int index = 1;
 
     if (aux != 0)
     {
-        resultado += 1;
-        aux = w;
         while (aux != 0)
         {
-            resultado += 1;
-
             switch (index)
             {
             case 1:
-                aux = x;
+                aux = w;
                 break;
             case 2:
+                aux = x;
+                break;
+            case 3:
                 aux = y;
                 break;
             default:
                 aux = z;
                 break;
             }
+            if (aux != 0)
+            {
 
+                resultado += 1;
+            }
+
+            if (index == 4)
+            {
+                return resultado;
+            }
             index++;
         }
 
@@ -57,6 +101,8 @@ int main(int argc, char *argv[])
 {
     FILE *input = fopen(argv[1], "r");
     FILE *output = fopen(argv[2], "w");
+    // FILE *input = fopen("input.txt", "r");
+    // FILE *output = fopen("output.txt", "w");
     if (input == NULL)
     {
         perror("Erro ao abrir o arquivo");
@@ -90,14 +136,12 @@ int main(int argc, char *argv[])
         char instrucao[30] = {0};
         uint8_t z = 0, x = 0, y = 0, i = 0, l = 0;
         uint32_t pc = R[29], xyl = 0, auxUnsigned32 = 0;
-        int32_t auxSigned32 = 0;
+        int32_t auxSigned32 = 0, aux_mask = 0;
         int64_t auxSigned64 = 0;
         uint64_t auxUnsigned64 = 0;
 
-        // Carregando a instrucao de 32 bits (4 bytes) da memoria indexada pelo PC (R29) no registrador IR (R28)
         R[28] = MEM32[R[29] >> 2];
 
-        // Obtendo o codigo da operacao (6 bits mais significativos)
         uint8_t opcode = (R[28] & (0b111111 << 26)) >> 26;
 
         switch (opcode)
@@ -108,8 +152,8 @@ int main(int argc, char *argv[])
             xyl = R[28] & 0x1FFFFF;
             R[z] = xyl;
 
-            sprintf(instrucao, "mov r%u,%u", z, xyl);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=0x%08X\n", R[29], instrucao, z, xyl);
+            sprintf(instrucao, "mov %s,%u", strRegistrador(z, 1), xyl);
+            fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), xyl);
             break;
 
         // divI
@@ -117,33 +161,48 @@ int main(int argc, char *argv[])
 
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            int32_t auxSigned = R[28] & 0xFFFF;
+            int16_t aux_divi = R[28] & 0xFFFF;
+            auxSigned32 = (int32_t)aux_divi;
+            int32_t auxRz = 0;
 
-            if (auxSigned != 0)
+            if (auxSigned32 != 0)
             {
-                R[z] = R[x] / auxSigned;
-            }
+                R[z] = (int32_t)R[x] / auxSigned32;
 
-            if (R[z] == 0)
-            {
-                R[31] |= ZN;
+                if (R[z] == 0)
+                {
+                    R[31] |= ZN;
+                }
+                else
+                {
+                    R[31] &= ~ZN;
+                }
             }
             else
             {
-                R[31] &= ~ZN;
+                auxRz = 0;
+
+                if (auxRz == 0)
+                {
+                    R[31] |= ZN;
+                }
+                else
+                {
+                    R[31] &= ~ZN;
+                }
+
+                if (auxSigned32 == 0)
+                {
+                    R[31] |= ZD;
+                }
+                else
+                {
+                    R[31] &= ~ZD;
+                }
             }
 
-            if (auxSigned == 0)
-            {
-                R[31] |= ZD;
-            }
-            else
-            {
-                R[31] &= ~ZD;
-            }
-
-            sprintf(instrucao, "divi r%u,r%u,%u", z, x, auxSigned);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u/0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, auxSigned, R[z], R[31]);
+            sprintf(instrucao, "divi %s,%s,%d", strRegistrador(z, 1), strRegistrador(x, 1), auxSigned32);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s/0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), auxSigned32, R[z], R[31]);
             break;
 
         // movs
@@ -151,14 +210,15 @@ int main(int argc, char *argv[])
 
             z = (R[28] & (0b11111 << 21)) >> 21;
             xyl = R[28] & 0x1FFFFF;
-            auxSigned = (R[28] >> 20) & 1;
-            int32_t aux_mask = auxSigned ? 0xFFE00000 : 0x00000000;
+            auxSigned32 = (R[28] >> 20) & 1;
+            aux_mask = auxSigned32 ? 0xFFE00000 : 0x00000000;
             auxSigned32 = aux_mask | xyl;
 
             R[z] = auxSigned32;
 
-            sprintf(instrucao, "movs r%u,%d", z, auxSigned32);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=0x%08X\n", R[29], instrucao, z, R[z]);
+            sprintf(instrucao, "movs %s,%d", strRegistrador(z, 1), auxSigned32);
+
+            fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), R[z]);
             break;
 
         // add
@@ -206,8 +266,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "add r%u,r%u,r%u", z, x, y);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u+R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
+            sprintf(instrucao, "add %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s+%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
             break;
 
         // addI
@@ -216,7 +276,7 @@ int main(int argc, char *argv[])
             x = (R[28] & (0b11111 << 16)) >> 16;
             int16_t aux_addI = R[28] & 0xFFFF;
 
-            auxSigned64 = R[x] + (int32_t)aux_addI;
+            auxSigned64 = (int64_t)R[x] + (int64_t)aux_addI;
             R[z] = R[x] + (int32_t)aux_addI;
 
             if (R[z] == 0)
@@ -255,8 +315,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "addi r%u,r%u,%d", z, x, (int32_t)aux_addI);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u+0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, (int32_t)aux_addI, R[z], R[31]);
+            sprintf(instrucao, "addi %s,%s,%d", strRegistrador(z, 1), strRegistrador(x, 1), (int32_t)aux_addI);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s+0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), (int32_t)aux_addI, R[z], R[31]);
 
             break;
 
@@ -304,8 +364,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "sub r%u,r%u,r%u", z, x, y);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u-R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
+            sprintf(instrucao, "sub %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s-%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
 
             break;
 
@@ -354,9 +414,9 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "subi r%u,r%u,%d", z, x, (int32_t)aux_i);
+            sprintf(instrucao, "subi %s,%s,%d", strRegistrador(z, 1), strRegistrador(x, 1), (int32_t)aux_i);
 
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u-0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, (int32_t)aux_i, R[z], R[31]);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s-0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), (int32_t)aux_i, R[z], R[31]);
             break;
 
         // caso variado
@@ -370,8 +430,12 @@ int main(int argc, char *argv[])
                 y = (R[28] & (0b11111 << 11)) >> 11;
                 l = R[28] & 0b11111;
 
-                auxUnsigned64 = ((uint64_t)R[l] & 0xFFFFFFFF00000000) | (uint64_t)R[z];
-                auxUnsigned64 = R[x] * R[y];
+                auxUnsigned64 = ((uint64_t)R[x]) * ((uint64_t)R[y]);
+
+                R[z] = (uint32_t)auxUnsigned64;
+                R[l] = (uint32_t)(auxUnsigned64 >> 32);
+
+                auxUnsigned64 = (uint64_t)R[l] << 32 | R[z];
 
                 if (auxUnsigned64 == 0)
                 {
@@ -381,7 +445,6 @@ int main(int argc, char *argv[])
                 {
                     R[31] &= ~ZN;
                 }
-
                 if (R[l] != 0)
                 {
                     R[31] |= CY;
@@ -391,10 +454,8 @@ int main(int argc, char *argv[])
                     R[31] &= ~CY;
                 }
 
-                R[z] = auxUnsigned64;
-
-                sprintf(instrucao, "mul r%u,r%u,r%u,r%u", l, z, x, y);
-                fprintf(output, "0x%08X:\t%-25s\tR%u:R%u=R%u*R%u=0x%016X,SR=0x%08X\n", R[29], instrucao, l, z, x, y, R[z], R[31]);
+                sprintf(instrucao, "mul %s,%s,%s,%s", strRegistrador(l, 1), strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
+                fprintf(output, "0x%08X:\t%-25s\t%s:%s=%s*%s=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, strRegistrador(l, 0), strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), auxUnsigned64, R[31]);
                 break;
 
             // sll
@@ -425,9 +486,11 @@ int main(int argc, char *argv[])
                     R[31] &= ~CY;
                 }
 
-                R[x] = auxUnsigned64;
-                sprintf(instrucao, "sll r%u,r%u,r%u,%u", z, x, x, l);
-                fprintf(output, "0x%08X:\t%-25s\tR%u:R%u=R%u:R%u<<%u=0x%016X,SR=0x%08X\n", R[29], instrucao, z, x, z, x, l + 1, R[x], R[31]);
+                R[z] = (auxUnsigned64 >> 32) & 0xFFFFFFFF;
+                R[y] = auxUnsigned64 & 0xFFFFFFFF;
+
+                sprintf(instrucao, "sll %s,%s,%s,%u", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(x, 1), l);
+                fprintf(output, "0x%08X:\t%-25s\t%s:%s=%s:%s<<%u=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(z, 0), strRegistrador(x, 0), l + 1, auxUnsigned64, R[31]);
                 break;
 
             // muls
@@ -437,9 +500,13 @@ int main(int argc, char *argv[])
                 y = (R[28] & (0b11111 << 11)) >> 11;
                 l = R[28] & 0b11111;
 
-                auxSigned = ((int64_t)R[l] << 32) | (int64_t)R[z];
+                int64_t xy = (int32_t)R[x] * (int32_t)R[y];
+                R[z] = xy;
+                R[l] = (xy >> 32);
 
-                if (auxSigned == 0)
+                int64_t aux_muls = ((int64_t)R[l] << 32) | R[z];
+
+                if (aux_muls == 0)
                 {
                     R[31] |= ZN;
                 }
@@ -447,7 +514,6 @@ int main(int argc, char *argv[])
                 {
                     R[31] &= ~ZN;
                 }
-                auxSigned = (int32_t)R[x] * (int32_t)R[y];
 
                 if (R[l] != 0)
                 {
@@ -457,9 +523,8 @@ int main(int argc, char *argv[])
                 {
                     R[31] &= ~OV;
                 }
-                R[z] = auxSigned;
                 sprintf(instrucao, "muls r%u,r%u,r%u,r%u", l, z, x, y);
-                fprintf(output, "0x%08X:\t%-25s\tR%u:R%u=R%u*R%u=0x%016X,SR=0x%08X\n", R[29], instrucao, l, z, x, y, R[z], R[31]);
+                fprintf(output, "0x%08X:\t%-25s\tR%u:R%u=R%u*R%u=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, l, z, x, y, aux_muls, R[31]);
                 break;
 
             // sla
@@ -503,8 +568,33 @@ int main(int argc, char *argv[])
                 y = (R[28] & (0b11111 << 11)) >> 11;
                 l = R[28] & 0b11111;
 
-                if (R[y] == 0)
+                if (R[y] != 0)
                 {
+
+                    R[l] = R[x] % R[y],
+                    R[z] = R[x] / R[y];
+
+                    if (R[l] != 0)
+                    {
+                        R[31] |= CY;
+                    }
+                    else
+                    {
+                        R[31] &= ~CY;
+                    }
+                }
+                else
+                {
+
+                    if (R[z] == 0)
+                    {
+                        R[31] |= ZN;
+                    }
+                    else
+                    {
+                        R[31] &= ~ZN;
+                    }
+
                     if (R[y] == 0)
                     {
                         R[31] |= ZD;
@@ -513,35 +603,8 @@ int main(int argc, char *argv[])
                     {
                         R[31] &= ~ZD;
                     }
-
-                    R[l] = 0;
-                    R[z] = 0;
                 }
-                else
-                {
-                    R[l] = R[x] % R[y],
-                    R[z] = R[x] / R[y];
-                }
-
-                if (R[z] == 0)
-                {
-                    R[31] |= ZN;
-                }
-                else
-                {
-                    R[31] &= ~ZN;
-                }
-
-                if (R[l] != 0)
-                {
-                    R[31] |= CY;
-                }
-                else
-                {
-                    R[31] &= ~CY;
-                }
-
-                sprintf(instrucao, "div r%u,r%u,r%u,%u", l, x, y, z);
+                sprintf(instrucao, "div r%u,r%u,r%u,r%u", l, z, x, y);
                 fprintf(output, "0x%08X:\t%-25s\tR%u=R%u%%R%u=0x%08X,R%u=R%u/R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, l, x, y, R[l], z, x, y, R[z], R[31]);
                 break;
 
@@ -623,7 +686,7 @@ int main(int argc, char *argv[])
                     R[31] &= ~CY;
                 }
 
-                sprintf(instrucao, "divs r%u,r%u,r%u,%u", l, x, y, z);
+                sprintf(instrucao, "divs r%u,r%u,r%u,r%u", l, z, x, y);
                 fprintf(output, "0x%08X:\t%-25s\tR%u=R%u%%R%u=0x%08X,R%u=R%u/R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, l, x, y, (int32_t)R[l], z, x, y, (int32_t)R[z], R[31]);
                 break;
 
@@ -659,10 +722,9 @@ int main(int argc, char *argv[])
                 R[x] = auxSigned64;
 
                 sprintf(instrucao, "sra r%u,r%u,r%u,%u", z, x, x, l);
-                fprintf(output, "0x%08X:\t%-25s\tR%u:R%u=R%u:R%u>>%u=0x%016X,SR=0x%08X\n", R[29], instrucao, z, x, z, x, l + 1, R[x], R[31]);
+                fprintf(output, "0x%08X:\t%-25s\tR%u:R%u=R%u:R%u>>%u=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, z, x, z, x, l + 1, auxSigned64, R[31]);
                 break;
             default:
-                // Exibindo mensagem de erro
                 fprintf(output, "Instrucao desconhecida!\n");
 
                 // Parar a execucao
@@ -675,14 +737,12 @@ int main(int argc, char *argv[])
         case 0b010100:
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            i = R[28] & 0xFFFF;
+            int16_t aux_muli = (R[28] & 0xFFFF);
 
-            auxSigned = (R[28] >> 15) & 1;
-            aux_mask = auxSigned ? 0x1FFFF : 0x00000000;
-            int32_t aux_mulI = aux_mask | i;
-
-            R[z] = R[x] * aux_mulI;
-            auxSigned64 = (int32_t)R[x] * aux_mulI;
+            int32_t aux_mulI32 = (int32_t)aux_muli;
+            R[z] = R[x] * aux_mulI32;
+            auxSigned64 = (int32_t)R[x] * aux_mulI32;
+            auxSigned32 = auxSigned64 >> 32;
 
             if (R[z] == 0)
             {
@@ -692,8 +752,7 @@ int main(int argc, char *argv[])
             {
                 R[31] &= ~ZN;
             }
-
-            if (auxSigned64 & (1ULL << 32))
+            if (auxSigned32 != 0)
             {
                 R[31] |= OV;
             }
@@ -702,8 +761,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "muli r%u,r%u,%u", z, x, i);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u*0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
+            sprintf(instrucao, "muli r%u,r%u,%d", z, x, aux_mulI32);
+            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u*0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, aux_mulI32, R[z], R[31]);
 
             break;
 
@@ -711,9 +770,10 @@ int main(int argc, char *argv[])
         case 0b010110:
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            i = R[28] & 0xFFFF;
+            int16_t aux_modi = R[28] & 0xFFFF;
+            auxSigned32 = (int32_t)aux_modi;
 
-            R[z] = R[x] % i;
+            R[z] = (int32_t)R[x] % auxSigned32;
 
             if (R[z] == 0)
             {
@@ -724,7 +784,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~ZN;
             }
 
-            if (i == 0)
+            if (aux_modi == 0)
             {
                 R[31] |= ZD;
             }
@@ -733,8 +793,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~ZD;
             }
 
-            sprintf(instrucao, "modi r%u,r%u,%u", z, x, i);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u%%0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, i, R[z], R[31]);
+            sprintf(instrucao, "modi r%u,r%u,%d", z, x, aux_modi);
+            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u%%0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, aux_modi, R[z], R[31]);
 
             break;
 
@@ -743,10 +803,9 @@ int main(int argc, char *argv[])
             x = (R[28] & (0b11111 << 16)) >> 16;
             y = (R[28] & (0b11111 << 11)) >> 11;
 
-            uint32_t CMP = R[x] - R[y];
-            auxUnsigned64 = R[x] - R[y];
-
-            if (CMP == 0)
+            auxUnsigned32 = R[x] - R[y];
+            auxUnsigned64 = (uint64_t)R[x] - (uint64_t)R[y];
+            if (auxUnsigned32 == 0)
             {
                 R[31] |= ZN;
             }
@@ -755,7 +814,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~ZN;
             }
 
-            if ((CMP & (1 << 31)))
+            if ((auxUnsigned32 & (1 << 31)))
             {
                 R[31] |= SN;
             }
@@ -773,7 +832,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~CY;
             }
 
-            if (((R[x] ^ R[y]) & (1 << 31)) && ((R[x] ^ CMP) & (1 << 31)))
+            if (((R[x] ^ R[y]) & (1 << 31)) && ((R[x] ^ auxUnsigned32) & (1 << 31)))
             {
                 R[31] |= OV;
             }
@@ -782,7 +841,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "cmp r%u,r%u", z, x);
+            sprintf(instrucao, "cmp %s,%s", strRegistrador(x, 1), strRegistrador(y, 1));
             fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[29], instrucao, R[31]);
 
             break;
@@ -792,9 +851,10 @@ int main(int argc, char *argv[])
             x = (R[28] & (0b11111 << 16)) >> 16;
             int16_t imediato = R[28] & 0xFFFF;
 
-            int64_t CMPI = R[x] - (int32_t)imediato;
+            int32_t aux_cmpi = (int32_t)imediato;
+            auxSigned64 = (int64_t)R[x] - (int64_t)aux_cmpi;
 
-            if (CMPI == 0)
+            if (auxSigned64 == 0)
             {
                 R[31] |= ZN;
             }
@@ -803,7 +863,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~ZN;
             }
 
-            if ((CMPI & (1 << 31)))
+            if ((auxSigned64 & (1 << 31)))
             {
                 R[31] |= SN;
             }
@@ -812,7 +872,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            if (CMPI & (1ULL << 32))
+            if (auxSigned64 & (1ULL << 32))
             {
                 R[31] |= CY;
             }
@@ -821,7 +881,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~CY;
             }
 
-            if (((R[x] ^ (int32_t)imediato) & (1 << 31)) && ((CMPI ^ R[x]) & (1 << 31)))
+            if (((R[x] ^ aux_cmpi) & (1 << 31)) && ((auxSigned64 ^ R[x]) & (1 << 31)))
             {
                 R[31] |= OV;
             }
@@ -830,7 +890,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "cmpi r%u,%u", x, imediato);
+            sprintf(instrucao, "cmpi %s,%d", strRegistrador(x, 1), aux_cmpi);
             fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[29], instrucao, R[31]);
 
             break;
@@ -861,8 +921,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "and r%u,r%u,r%u", z, x, y);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u&R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
+            sprintf(instrucao, "and %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s&%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
 
             break;
 
@@ -892,9 +952,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "or r%u,r%u,r%u", z, x, y);
-            // Formatacao de saida em tela (deve mudar para o arquivo de saida)
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u|R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
+            sprintf(instrucao, "or %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s|%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
 
             break;
 
@@ -923,8 +982,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "not r%u,r%u", z, x);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=~R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, R[z], R[31]);
+            sprintf(instrucao, "not %s,%s", strRegistrador(z, 1), strRegistrador(x, 1));
+            fprintf(output, "0x%08X:\t%-25s\t%s=~%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), R[z], R[31]);
 
             break;
 
@@ -954,8 +1013,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "xor r%u,r%u,r%u", z, x, y);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u^R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, y, R[z], R[31]);
+            sprintf(instrucao, "xor %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s^%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
 
             break;
 
@@ -964,12 +1023,13 @@ int main(int argc, char *argv[])
 
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            i = R[28] & 0xFFFF;
+            uint16_t aux_l8 = R[28] & 0xFFFF;
+            auxUnsigned32 = (uint32_t)aux_l8;
 
-            R[z] = (((uint8_t *)(&MEM32[(R[x] + i) >> 2]))[3 - ((R[x] + i) % 4)]);
+            R[z] = (((uint8_t *)(&MEM32[(R[x] + auxUnsigned32) >> 2]))[3 - ((R[x] + auxUnsigned32) % 4)]);
 
-            sprintf(instrucao, "l8 r%u,[r%u%s%i]", z, x, (i >= 0) ? ("+") : (""), i);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%02X\n", R[29], instrucao, z, R[x] + i, R[z]);
+            sprintf(instrucao, "l8 r%u,[r%u%s%i]", z, x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32);
+            fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%02X\n", R[29], instrucao, z, R[x] + auxUnsigned32, R[z]);
 
             break;
 
@@ -977,12 +1037,13 @@ int main(int argc, char *argv[])
         case 0b011001:
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            i = R[28] & 0xFFFF;
+            uint16_t aux_l16 = R[28] & 0xFFFF;
+            auxUnsigned32 = (uint32_t)aux_l16;
 
-            R[z] = ((uint16_t *)(&MEM32[(R[x] + i) >> 1]))[1 - ((R[x] + i) % 2)];
+            R[z] = ((uint16_t *)(&MEM32[(R[x] + auxUnsigned32) >> 1]))[1 - ((R[x] + auxUnsigned32) % 2)];
 
-            sprintf(instrucao, "l16 r%u,[r%u%s%i]", z, x, (i >= 0) ? ("+") : (""), i);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%02X\n", R[29], instrucao, z, (R[x] + i) << 1, R[z]);
+            sprintf(instrucao, "l16 r%u,[r%u%s%i]", z, x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32);
+            fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%04X\n", R[29], instrucao, z, (R[x] + auxUnsigned32) << 1, R[z]);
 
             break;
 
@@ -1004,12 +1065,13 @@ int main(int argc, char *argv[])
         case 0b011011:
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            i = R[28] & 0xFFFF;
+            uint16_t aux_s8 = R[28] & 0xFFFF;
+            auxUnsigned32 = (uint32_t)aux_s8;
 
-            (((uint8_t *)(&MEM32[(R[x] + i) >> 2]))[3 - ((R[x] + i) % 4)]) = R[z];
+            (((uint8_t *)(&MEM32[(R[x] + auxUnsigned32) >> 2]))[3 - ((R[x] + auxUnsigned32) % 4)]) = R[z];
 
-            sprintf(instrucao, "s8 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
-            fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%02X\n", R[29], instrucao, R[x] + i, z, R[z]);
+            sprintf(instrucao, "s8 [r%u%s%i],r%u", x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32, z);
+            fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%02X\n", R[29], instrucao, R[x] + auxUnsigned32, z, R[z]);
 
             break;
 
@@ -1017,13 +1079,14 @@ int main(int argc, char *argv[])
         case 0b011100:
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
-            i = R[28] & 0xFFFF;
+            uint16_t aux_s16 = R[28] & 0xFFFF;
+            auxUnsigned32 = (uint32_t)aux_s16;
 
-            ((uint16_t *)(&MEM32[(R[x] + i) >> 1]))[1 - ((R[x] + i) % 2)] = R[z];
+            ((uint16_t *)(&MEM32[(R[x] + auxUnsigned32) >> 1]))[1 - ((R[x] + auxUnsigned32) % 2)] = R[z];
 
-            sprintf(instrucao, "s16 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
+            sprintf(instrucao, "s16 [r%u%s%i],r%u", x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32, z);
 
-            fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%02X\n", R[29], instrucao, (R[x] + i) << 1, z, R[z]);
+            fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%04X\n", R[29], instrucao, (R[x] + auxUnsigned32) << 1, z, R[z]);
 
             break;
 
@@ -1048,10 +1111,10 @@ int main(int argc, char *argv[])
 
             if (!((R[31] >> CY) & 1))
             {
-                R[29] = R[29] + 4 + aux_bae;
+                R[29] = R[29] + (aux_bae << 2);
             }
             sprintf(instrucao, "bae %u", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
@@ -1061,12 +1124,13 @@ int main(int argc, char *argv[])
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bat = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (!((R[31] >> ZN) & 1) && !((R[31] >> CY) & 1))
+            if (!((R[31] >> (ZN & 31)) & 1) && !((R[31] >> CY) & 1))
             {
-                R[29] = R[29] + 4 + aux_bat;
+                R[29] = R[29] - 4 + (aux_bat << 2);
             }
+
             sprintf(instrucao, "bat %u", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
@@ -1076,13 +1140,13 @@ int main(int argc, char *argv[])
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_bbe = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (((R[31] >> ZN) & 1) || ((R[31] >> CY) & 1))
+            if ((R[31] >> (ZN & 32)) || ((R[31] >> CY) & 1))
             {
-                R[29] = R[29] + 4 + aux_bbe;
+                R[29] = R[29] + (aux_bbe << 2);
             }
 
             sprintf(instrucao, "bbe %u", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
@@ -1094,43 +1158,43 @@ int main(int argc, char *argv[])
 
             if (((R[31] >> CY) & 1))
             {
-                R[29] = R[29] + 4 + aux_bbt;
+                R[29] = R[29] + (aux_bbt << 2);
             }
 
             sprintf(instrucao, "bbt %u", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
         // beq
         case 0b101110:
-            auxSigned32 = (R[28] >> 25) & 1;
-            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_beq = aux_mask | (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] & 0x3FFFFFF);
 
-            if ((R[31] >> ZN) & 1)
+            if ((R[31] & 1 << 6))
             {
-                R[29] = R[29] + 4 + aux_beq;
+                R[29] = R[29] + (auxSigned32 << 2);
             }
 
             sprintf(instrucao, "beq %i  ", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X \n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
         // bge
         case 0b101111:
-            auxSigned32 = (R[28] >> 25) & 1;
-            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_bge = aux_mask | (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] & 0x3FFFFFF);
 
-            if (((R[31] >> SN) & 1) == ((R[31] >> OV) & 1))
+            if ((R[31] & 1 << 3) == (R[31] & 1 << 4))
             {
-                R[29] = R[29] + 4 + aux_bge;
+                R[29] = R[29] + (auxSigned32 << 2);
+                sprintf(instrucao, "bge %i ", R[28] & 0x3FFFFFF);
+                fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             }
-
-            sprintf(instrucao, "bge %i ", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            else
+            {
+                sprintf(instrucao, "bge %i ", R[28] & 0x3FFFFFF);
+                fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
+            }
 
             break;
 
@@ -1138,27 +1202,28 @@ int main(int argc, char *argv[])
         case 0b110000:
             auxSigned32 = (R[28] >> 25) & 1;
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_bgt = aux_mask | (R[28] & 0x3FFFFFF);
+            int32_t aux_bgt = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if ((((R[31] >> ZN) & 1) == 0) && (((R[31] >> SN) & 1) == ((R[31] >> OV) & 1)))
+            if ((((R[31] >> (ZN & 31))) == 0) && (((R[31] >> SN) & 1) == ((R[31] >> OV) & 1)))
             {
-                R[29] = R[29] + 4 + aux_bgt;
+                R[29] = R[29] + (aux_bgt << 2);
             }
 
             sprintf(instrucao, "bgt %i", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // biv
         case 0b110001:
-            auxSigned32 = (R[28] >> 25) & 1;
-            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_biv = aux_mask | (R[28] & 0x3FFFFFF);
-
-            R[29] = R[29] + 4 + aux_biv;
-
+            auxSigned32 = (R[28] & 0x3FFFFFF);
             sprintf(instrucao, "biv %i", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+
+            if ((R[31] & 1 << 2))
+            {
+                R[29] = R[29] + (auxSigned32 << 2);
+            }
+
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // ble
@@ -1167,40 +1232,36 @@ int main(int argc, char *argv[])
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             uint32_t aux_ble = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (((R[31] >> ZN) & 1) && (((R[31] >> SN) & 1) != ((R[31] >> OV) & 1)))
+            if (((R[31] >> (ZN & 31))) || (((R[31] >> SN) & 1) != ((R[31] >> OV) & 1)))
             {
-                R[29] = R[29] + 4 + aux_ble;
+                R[29] = R[29] + (aux_ble << 2);
             }
 
             sprintf(instrucao, "ble %i", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
             break;
 
         // blt
         case 0b110011:
-            auxSigned32 = (R[28] >> 25) & 1;
-            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_blt = aux_mask | (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] & 0x3FFFFFF);
 
-            if (((R[31] >> SN) & 1) != ((R[31] >> OV) & 1))
+            if ((R[31] & 1 << 3) != (R[31] & 1 << 4))
             {
-                R[29] = R[29] + 4 + aux_blt;
+                R[29] = R[29] + (auxSigned32 << 2);
             }
 
             sprintf(instrucao, "blt %i", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
         // bne
         case 0b110100:
-            auxSigned32 = (R[28] >> 25) & 1;
-            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_bne = aux_mask | (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] & 0x3FFFFFF);
 
-            if (!((R[31] >> ZN) & 1))
+            if (!(R[31] & 1 << 6))
             {
-                R[29] = R[29] + (aux_bne << 2);
+                R[29] = R[29] + (auxSigned32 << 2);
             }
 
             sprintf(instrucao, "bne %i", R[28] & 0x3FFFFFF);
@@ -1210,31 +1271,30 @@ int main(int argc, char *argv[])
 
         // bni
         case 0b110101:
-            auxSigned32 = (R[28] >> 25) & 1;
-            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_bni = aux_mask | (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] & 0x3FFFFFF);
 
-            if (!((R[31] >> OV) & 1))
+            if ((R[31] & 1 << 2) == 0)
             {
-                R[29] = R[29] + 4 + aux_bni;
+                R[29] = R[29] + (auxSigned32 << 2);
             }
 
             sprintf(instrucao, "bni %i", R[28] & 0x3FFFFFF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29]);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
         // bnz
         case 0b110110:
             pc = R[29];
-
-            if (!((R[31] >> ZD) & 1))
-            {
-
-                R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
-            }
+            auxSigned32 = (R[28] & 0x3FFFFFF);
 
             sprintf(instrucao, "bnz %i", R[28] & 0x3FFFFFF);
+
+            if ((R[31] & 1 << 5) == 0)
+            {
+                R[29] = R[29] + (auxSigned32 << 2);
+            }
+
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
@@ -1253,10 +1313,14 @@ int main(int argc, char *argv[])
         // bzd
         case 0b111000:
             pc = R[29];
-
-            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+            uint32_t aux_bzd = (R[28] & 0x3FFFFFF);
 
             sprintf(instrucao, "bzd %i", R[28] & 0x3FFFFFF);
+            if ((R[31] & 1 << 5))
+            {
+                R[29] = R[29] + (aux_bzd << 2);
+            }
+
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
@@ -1274,10 +1338,10 @@ int main(int argc, char *argv[])
             R[SP] += 4;
             auxUnsigned32 = R[PC];
             R[PC] = MEM32[R[SP]];
+            R[PC] -= 4;
 
             sprintf(instrucao, "ret");
             fprintf(output, "0x%08X:\t%-25s\tPC=MEM[0x%08X]=0x%08X\n", auxUnsigned32, instrucao, R[SP], MEM32[R[SP]]);
-            R[PC] -= 4;
             break;
 
         // push
@@ -1287,91 +1351,44 @@ int main(int argc, char *argv[])
             y = (R[28] & (0b11111 << 11)) >> 11;
             uint8_t v = (R[28] & (0b11111 << 6)) >> 6;
             uint8_t w = (R[28] & 0b11111);
-            uint8_t aux_push = v;
 
             int qtdRegistradores = calcQtdRegistradores(v, w, x, y, z);
-            int aux_qtdRegistradores = 0;
-            if (qtdRegistradores == 1)
-            {
-                MEM32[R[SP]] = R[aux_push];
-                sprintf(instrucao, "push r%d", v);
-                fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]{0x%08X}={R%d}\n", R[PC], instrucao, R[SP], MEM32[R[SP]], v);
-                R[SP] -= 4;
-            }
-            else if (qtdRegistradores > 0)
-            {
-                switch (qtdRegistradores)
-                {
-                case 2:
-                    sprintf(instrucao, "push r%d r%d", v, w);
-                    break;
-                case 3:
-                    sprintf(instrucao, "push r%d r%d r%d", v, w, x);
-                    break;
-                case 4:
-                    sprintf(instrucao, "push r%d r%d r%d r%d", v, w, x, y);
-                    break;
-                case 5:
-                    sprintf(instrucao, "push r%d r%d r%d r%d r%d", v, w, x, y, z);
-                    break;
-                }
 
+            if (qtdRegistradores > 0)
+            {
+                uint8_t regsPush[5] = {v, w, x, y, z};
+
+                char *formatosPush[] = {
+                    "",
+                    "push r%d",
+                    "push r%d,r%d",
+                    "push r%d,r%d,r%d",
+                    "push r%d,r%d,r%d,r%d",
+                    "push r%d,r%d,r%d,r%d,r%d"};
+
+                sprintf(instrucao, formatosPush[qtdRegistradores], regsPush[0], regsPush[1], regsPush[2], regsPush[3], regsPush[4]);
                 fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]{", R[PC], instrucao, R[SP]);
 
-                while (aux_qtdRegistradores < qtdRegistradores)
+                for (int i = 0; i < qtdRegistradores; i++)
                 {
-                    MEM32[R[SP]] = R[aux_push];
+                    MEM32[R[SP]] = R[regsPush[i]];
                     fprintf(output, "0x%08X", MEM32[R[SP]]);
                     R[SP] -= 4;
-                    if (aux_qtdRegistradores + 1 < qtdRegistradores)
+                    if (i + 1 < qtdRegistradores)
                     {
                         fprintf(output, ",");
-                        switch (aux_qtdRegistradores)
-                        {
-                        case 0:
-                            aux_push = w;
-                            break;
-                        case 1:
-                            aux_push = x;
-                            break;
-                        case 2:
-                            aux_push = y;
-                            break;
-                        default:
-                            aux_push = z;
-                            break;
-                        }
                     }
-                    aux_qtdRegistradores++;
                 }
+
                 fprintf(output, "}={");
 
-                aux_qtdRegistradores = 0;
-                aux_push = v;
-                while (aux_qtdRegistradores < qtdRegistradores)
+                for (int i = 0; i < qtdRegistradores; i++)
                 {
-                    fprintf(output, "R%d", aux_push);
-                    if (aux_qtdRegistradores + 1 < qtdRegistradores)
+                    fprintf(output, "R%d", regsPush[i]);
+                    if (i + 1 < qtdRegistradores)
                     {
                         fprintf(output, ",");
                     }
-
-                    switch (aux_qtdRegistradores)
-                    {
-                    case 0:
-                        aux_push = w;
-                        break;
-                    case 1:
-                        aux_push = x;
-                        break;
-                    case 2:
-                        aux_push = y;
-                        break;
-                    default:
-                        aux_push = z;
-                        break;
-                    }
-                    aux_qtdRegistradores++;
                 }
                 fprintf(output, "}\n");
             }
@@ -1380,102 +1397,55 @@ int main(int argc, char *argv[])
                 sprintf(instrucao, "push -");
                 fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]{}={}\n", R[PC], instrucao, R[SP]);
             }
-
             break;
 
-        // pop
+            // pop
         case 0b001011:
+            // Extração dos valores dos registradores a partir do código de operação
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
             y = (R[28] & (0b11111 << 11)) >> 11;
             v = (R[28] & (0b11111 << 6)) >> 6;
             w = (R[28] & 0b11111);
 
-            uint8_t aux_pop = v;
-
+            // Calcula a quantidade de registradores envolvidos na operação
             int qtdRegistradores_pop = calcQtdRegistradores(v, w, x, y, z);
-            int aux_qtdRegistradores_pop = 0;
-            if (qtdRegistradores_pop == 1)
-            {
-                MEM32[R[SP]] = R[aux_pop];
-                sprintf(instrucao, "pop r%d", v);
-                fprintf(output, "0x%08X:\t%-25s\t{R%d}=MEM[0x%08X]{0x%08X}\n", R[PC], instrucao, v, R[SP], MEM32[R[SP]]);
-                R[SP] += 4;
-            }
-            else if (qtdRegistradores_pop > 0)
-            {
-                switch (qtdRegistradores_pop)
-                {
-                case 2:
-                    sprintf(instrucao, "pop r%d r%d", v, w);
-                    break;
-                case 3:
-                    sprintf(instrucao, "pop r%d r%d r%d", v, w, x);
-                    break;
-                case 4:
-                    sprintf(instrucao, "pop r%d r%d r%d r%d", v, w, x, y);
-                    break;
-                case 5:
-                    sprintf(instrucao, "pop r%d r%d r%d r%d r%d", v, w, x, y, z);
-                    break;
-                }
 
+            if (qtdRegistradores_pop > 0)
+            {
+                uint8_t regsPop[5] = {v, w, x, y, z};
+
+                char *formatosPop[] = {
+                    "",
+                    "pop r%d",
+                    "pop r%d,r%d",
+                    "pop r%d,r%d,r%d",
+                    "pop r%d,r%d,r%d,r%d",
+                    "pop r%d,r%d,r%d,r%d,r%d"};
+
+                sprintf(instrucao, formatosPop[qtdRegistradores_pop], regsPop[0], regsPop[1], regsPop[2], regsPop[3], regsPop[4]);
                 fprintf(output, "0x%08X:\t%-25s\t{", R[PC], instrucao);
 
-                while (aux_qtdRegistradores_pop < qtdRegistradores_pop)
+                for (int i = 0; i < qtdRegistradores_pop; i++)
                 {
-                    fprintf(output, "R%d", aux_pop);
-                    if (aux_qtdRegistradores_pop + 1 < qtdRegistradores_pop)
+                    fprintf(output, "R%d", regsPop[i]);
+                    if (i + 1 < qtdRegistradores_pop)
                     {
                         fprintf(output, ",");
                     }
-
-                    switch (aux_qtdRegistradores_pop)
-                    {
-                    case 0:
-                        aux_pop = w;
-                        break;
-                    case 1:
-                        aux_pop = x;
-                        break;
-                    case 2:
-                        aux_pop = y;
-                        break;
-                    default:
-                        aux_pop = z;
-                        break;
-                    }
-                    aux_qtdRegistradores_pop++;
                 }
+
                 fprintf(output, "}=MEM[0x%08X]{", R[SP]);
 
-                aux_qtdRegistradores_pop = 0;
-                aux_pop = v;
-                while (aux_qtdRegistradores_pop < qtdRegistradores_pop)
+                for (int i = 0; i < qtdRegistradores_pop; i++)
                 {
                     R[SP] += 4;
+                    R[regsPop[i]] = MEM32[R[SP]];
                     fprintf(output, "0x%08X", MEM32[R[SP]]);
-                    R[aux_pop] = MEM32[R[SP]];
-                    if (aux_qtdRegistradores_pop + 1 < qtdRegistradores_pop)
+                    if (i + 1 < qtdRegistradores_pop)
                     {
                         fprintf(output, ",");
-                        switch (aux_qtdRegistradores_pop)
-                        {
-                        case 0:
-                            aux_pop = w;
-                            break;
-                        case 1:
-                            aux_pop = x;
-                            break;
-                        case 2:
-                            aux_pop = y;
-                            break;
-                        default:
-                            aux_pop = z;
-                            break;
-                        }
                     }
-                    aux_qtdRegistradores_pop++;
                 }
                 fprintf(output, "}\n");
             }
@@ -1484,7 +1454,7 @@ int main(int argc, char *argv[])
                 sprintf(instrucao, "pop -");
                 fprintf(output, "0x%08X:\t%-25s\t{}=MEM[0x%08X]{}\n", R[PC], instrucao, R[SP]);
             }
-
+            // return 0;
             break;
 
         // call tipo S
@@ -1501,21 +1471,21 @@ int main(int argc, char *argv[])
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X,MEM[0x%08X]=0x%08X\n", aux_pc, instrucao, R[PC] + 4, R[SP], MEM32[R[SP]]);
 
             R[SP] -= 4;
-
             break;
 
         // call tipo F
         case 0b011110:
             x = (R[28] & (0b11111 << 16)) >> 16;
             uint16_t aux_callF = R[28] & 0xFFFF;
+            auxUnsigned32 = R[PC];
 
             MEM32[R[SP]] = R[PC] + 4;
+            R[PC] = (R[x] + (uint32_t)aux_callF) << 2;
+
+            sprintf(instrucao, "call [r%d+%d]", x, (uint32_t)aux_callF);
+            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X,MEM[0x%08X]=0x%08X\n", auxUnsigned32, instrucao, R[PC], R[SP], MEM32[R[SP]]);
+            R[PC] -= 4;
             R[SP] -= 4;
-            R[PC] = (R[x] + (uint32_t)aux_callF) << 1;
-
-            sprintf(instrucao, "call %d", (uint32_t)aux_callF);
-            fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X,MEM[0x%08X]=0x%08X\n", R[29], instrucao, R[PC], MEM32[SP], R[SP]);
-
             break;
 
         // Instrucao desconhecida
@@ -1530,6 +1500,7 @@ int main(int argc, char *argv[])
     fprintf(output, "[END OF SIMULATION]\n");
 
     fclose(input);
+    fclose(output);
     free(MEM32);
     return 0;
 }
