@@ -1,1 +1,1 @@
-# poxim
+# Poxim - Projeto para disciplina de arquitetura de computadores UFS 2024.1
