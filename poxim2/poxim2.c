@@ -19,6 +19,60 @@
 #define SP 30
 #define SR 31
 
+uint8_t interruptionState = 0;
+
+void intTreatment(uint32_t *R, uint32_t aux_int)
+{
+    R[CR] = aux_int;
+    R[IPC] = R[PC];
+    R[PC] = 0x0000000C;
+    R[PC] -= 4;
+}
+
+void identifiesInterruption(uint8_t causeOfInterruption, uint32_t aux_int, uint32_t *R, FILE *output, char *instrucao)
+{
+    switch (causeOfInterruption)
+    {
+    case 2:
+        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
+        R[31] |= IV;
+        R[CR] = (R[IR] & (0b111111 << 26)) >> 26;
+        R[IPC] = R[PC];
+        R[PC] = 0x00000004;
+        R[PC] -= 4;
+        break;
+    case 3:
+        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
+        R[CR] = 0;
+        R[IPC] = R[PC];
+        R[PC] = 0x00000008;
+        R[PC] -= 4;
+        break;
+    case 4:
+        intTreatment(R, aux_int);
+        fprintf(output, "0x%08X:\t%-25s\tCR=0x%08X,PC=0x%08X\n", R[29], instrucao, R[CR], R[PC] + 4);
+        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
+        break;
+
+    default:
+        break;
+    }
+
+    interruptionState = 0;
+}
+
+void ISR(uint32_t *MEM32, uint32_t *R)
+{
+    MEM32[R[SP]] = R[PC] + 4;
+    R[SP] -= 4;
+
+    MEM32[R[SP]] = R[CR];
+    R[SP] -= 4;
+
+    MEM32[R[SP]] = R[IPC];
+    R[SP] -= 4;
+}
+
 char *strRegistrador(int num, int type)
 {
     char *result = (char *)malloc(10 * sizeof(char));
@@ -27,7 +81,7 @@ char *strRegistrador(int num, int type)
         return NULL;
     }
 
-    if (num < 28 || num > 31)
+    if (num < 26 || num > 31)
     {
         snprintf(result, 10, "%c%d", type ? 'r' : 'R', num);
         return result;
@@ -35,6 +89,12 @@ char *strRegistrador(int num, int type)
 
     switch (num)
     {
+    case 26:
+        strcpy(result, type ? "cr" : "CR");
+        break;
+    case 27:
+        strcpy(result, type ? "ipc" : "IPC");
+        break;
     case 28:
         strcpy(result, type ? "ir" : "IR");
         break;
@@ -103,7 +163,7 @@ int calcQtdRegistradores(int v, int w, int x, int y, int z)
 int main(int argc, char *argv[])
 {
 
-    FILE *input = fopen("inputPoxim2.txt", "r");
+    FILE *input = fopen("input.txt", "r");
     FILE *output = fopen("output.txt", "w");
     if (input == NULL)
     {
@@ -111,6 +171,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    uint8_t causeOfInterruption = 0;
     uint32_t R[32] = {0};
     uint32_t *MEM32 = (uint32_t *)calloc(32 * 1024, sizeof(uint32_t));
 
@@ -165,7 +226,6 @@ int main(int argc, char *argv[])
             x = (R[28] & (0b11111 << 16)) >> 16;
             int16_t aux_divi = R[28] & 0xFFFF;
             auxSigned32 = (int32_t)aux_divi;
-            int32_t auxRz = 0;
 
             if (auxSigned32 != 0)
             {
@@ -179,20 +239,17 @@ int main(int argc, char *argv[])
                 {
                     R[31] &= ~ZN;
                 }
+
+                R[31] &= ~ZD;
             }
             else
             {
-                auxRz = 0;
+                R[31] |= ZD;
 
-                R[31] |= ZN;
-
-                if (auxSigned32 == 0)
+                if (R[IE])
                 {
-                    R[31] |= ZD;
-                }
-                else
-                {
-                    R[31] &= ~ZD;
+                    interruptionState = 1;
+                    causeOfInterruption = 3;
                 }
             }
 
@@ -597,6 +654,12 @@ int main(int argc, char *argv[])
                     else
                     {
                         R[31] &= ~ZD;
+                    }
+
+                    if (R[IE])
+                    {
+                        interruptionState = 1;
+                        causeOfInterruption = 3;
                     }
                 }
                 sprintf(instrucao, "div r%u,r%u,r%u,r%u", l, z, x, y);
@@ -1324,9 +1387,9 @@ int main(int argc, char *argv[])
         case 0b111111:
             auxUnsigned32 = (R[28] >> 25) & 1;
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
-            uint32_t aux_int = aux_mask | (R[28] & 0x3FFFFFF);
+            auxUnsigned32 = aux_mask | (R[28] & 0x3FFFFFF);
 
-            if (aux_int == 0)
+            if (auxUnsigned32 == 0)
             {
                 executa = 0;
                 sprintf(instrucao, "int 0");
@@ -1334,13 +1397,9 @@ int main(int argc, char *argv[])
             }
             else
             {
-                R[CR] = aux_int;
-                R[IPC] = R[PC];
-                R[PC] = 0x0000000C;
-                R[PC] -= 4;
-                sprintf(instrucao, "int %d", aux_int);
-                fprintf(output, "0x%08X:\t%-25s\tCR=0x%08X,PC=0x%08X\n", R[29], instrucao, R[CR], R[PC] + 4);
-                fprintf(output, "SOFTWARE INTERRUPTION\n");
+                interruptionState = 1;
+                causeOfInterruption = 4;
+                sprintf(instrucao, "int %d", auxUnsigned32);
             }
 
             break;
@@ -1356,7 +1415,8 @@ int main(int argc, char *argv[])
 
                 R[z] &= ~(0b1 << x);
 
-                break;
+                sprintf(instrucao, "cbr sr[%d]", (R[28] >> 30) & 1);
+                fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[PC], instrucao, R[SR]);
             }
             else
             {
@@ -1365,6 +1425,8 @@ int main(int argc, char *argv[])
                 x = (R[28] & (0b11111 << 16)) >> 16;
 
                 R[z] |= (0b1 << x);
+                sprintf(instrucao, "sbr sr[%d]", x);
+                fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[PC], instrucao, R[SR]);
             }
 
             break;
@@ -1375,23 +1437,18 @@ int main(int argc, char *argv[])
             uint32_t spAtual = auxUnsigned32;
             uint32_t pcAtual = R[PC];
 
+            R[SP] += 4;
             R[IPC] = MEM32[R[SP]];
-            printf("R[SP] = 0x%08X\n", R[SP]);
-            printf("R[IPC] = 0x%08X\n", R[IPC]);
 
-            R[SP] -= 4;
+            R[SP] += 4;
             R[CR] = MEM32[R[SP]];
-            printf("R[SP] = 0x%08X\n", R[SP]);
-            printf("R[CR] = 0x%08X\n", R[CR]);
 
-            R[SP] -= 4;
+            R[SP] += 4;
             R[PC] = MEM32[R[SP]];
-            printf("R[SP] = 0x%08X\n", R[SP]);
-            printf("R[PC] = 0x%08X\n", R[PC]);
 
             sprintf(instrucao, "reti");
-            fprintf(output, "0x%08X:\t%-25s\tIPC=MEM[0x%08X]=0x%08X,CR=MEM[0x%08X]=0x%08X,PC=MEM[0x%08X]=0x%08X\n", pcAtual, instrucao, spAtual + 4, MEM32[R[SP] + 4], spAtual + 8, MEM32[R[SP] + 8], spAtual + 12, MEM32[R[SP] + 12]);
-            return 0;
+            fprintf(output, "0x%08X:\t%-25s\tIPC=MEM[0x%08X]=0x%08X,CR=MEM[0x%08X]=0x%08X,PC=MEM[0x%08X]=0x%08X\n", pcAtual, instrucao, spAtual + 4, MEM32[spAtual + 4], spAtual + 8, MEM32[spAtual + 8], spAtual + 12, MEM32[R[SP]]);
+            R[PC] -= 4;
             break;
 
         // ret
@@ -1552,9 +1609,16 @@ int main(int argc, char *argv[])
         // Instrucao desconhecida
         default:
             fprintf(output, "[INVALID INSTRUCTION @ 0x%08X]\n", R[29]);
-
-            executa = 0;
+            interruptionState = 1;
+            causeOfInterruption = 2;
         }
+
+        if (interruptionState)
+        {
+            ISR(MEM32, R);
+            identifiesInterruption(causeOfInterruption, auxUnsigned32, R, output, instrucao);
+        }
+
         R[29] = R[29] + 4;
     }
 
