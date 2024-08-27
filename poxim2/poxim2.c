@@ -19,14 +19,17 @@
 #define SP 30
 #define SR 31
 
+#define COUNTER 0x80808080
+
 uint8_t interruptionState = 0;
 
-void intTreatment(uint32_t *R, uint32_t aux_int)
+void watchdog(uint32_t instruction)
 {
-    R[CR] = aux_int;
-    R[IPC] = R[PC];
-    R[PC] = 0x0000000C;
-    R[PC] -= 4;
+
+    if ((instruction << 31) & 1)
+    {
+        instruction--;
+    }
 }
 
 void identifiesInterruption(uint8_t causeOfInterruption, uint32_t aux_int, uint32_t *R, FILE *output, char *instrucao)
@@ -49,7 +52,10 @@ void identifiesInterruption(uint8_t causeOfInterruption, uint32_t aux_int, uint3
         R[PC] -= 4;
         break;
     case 4:
-        intTreatment(R, aux_int);
+        R[CR] = aux_int;
+        R[IPC] = R[PC];
+        R[PC] = 0x0000000C;
+        R[PC] -= 4;
         fprintf(output, "0x%08X:\t%-25s\tCR=0x%08X,PC=0x%08X\n", R[29], instrucao, R[CR], R[PC] + 4);
         fprintf(output, "[SOFTWARE INTERRUPTION]\n");
         break;
@@ -1154,7 +1160,14 @@ int main(int argc, char *argv[])
             x = (R[28] & (0b11111 << 16)) >> 16;
             i = R[28] & 0xFFFF;
 
-            MEM32[R[x] + i] = R[z];
+            if ((R[x] + i) << 2 == COUNTER)
+            {
+                watchdog(R[x] + i);
+            }
+            else
+            {
+                MEM32[R[x] + i] = R[z];
+            }
 
             sprintf(instrucao, "s32 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
             fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%08X\n", R[29], instrucao, (R[x] + i) << 2, z, R[z]);
