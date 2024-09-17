@@ -5,12 +5,11 @@
 #include <inttypes.h>
 
 #define ZN (1 << 6)
-#define ZD (1 << 5)
-#define SN (1 << 4)
-#define OV (1 << 3)
-#define IV (1 << 2)
-#define IE (1 << 1)
 #define CY (1 << 0)
+#define OV (1 << 3)
+#define SN (1 << 4)
+#define ZD (1 << 5)
+#define IV (1 << 2)
 
 #define CR 26
 #define IPC 27
@@ -20,52 +19,42 @@
 #define SR 31
 
 #define COUNTER 0x80808080
+#define TERMINAL 0x88888888
+#define IN 0x8888888A
+#define OUT 0x8888888B
+#define X 0x80808880
+#define x_ 0x20202220
+#define Y 0x80808884
+#define y_ 0x20202221
+#define Z 0x80808888
+#define z_ 0x20202222
+#define st 0x8080888C
+#define op 0x8080888F
 
-uint8_t interruptionState = 0;
-
-void watchdog(uint32_t instruction)
+typedef struct Terminal
 {
+    int size;
+    char *buffer;
+} Terminal;
 
-    if ((instruction << 31) & 1)
-    {
-        instruction--;
-    }
-}
-
-void identifiesInterruption(uint8_t causeOfInterruption, uint32_t aux_int, uint32_t *R, FILE *output, char *instrucao)
+typedef struct Watchdogs
 {
-    switch (causeOfInterruption)
-    {
-    case 2:
-        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
-        R[31] |= IV;
-        R[CR] = (R[IR] & (0b111111 << 26)) >> 26;
-        R[IPC] = R[PC];
-        R[PC] = 0x00000004;
-        R[PC] -= 4;
-        break;
-    case 3:
-        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
-        R[CR] = 0;
-        R[IPC] = R[PC];
-        R[PC] = 0x00000008;
-        R[PC] -= 4;
-        break;
-    case 4:
-        R[CR] = aux_int;
-        R[IPC] = R[PC];
-        R[PC] = 0x0000000C;
-        R[PC] -= 4;
-        fprintf(output, "0x%08X:\t%-25s\tCR=0x%08X,PC=0x%08X\n", R[29], instrucao, R[CR], R[PC] + 4);
-        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
-        break;
+    int watchdogState;
+    uint32_t counter;
+    int en;
+} Watchdogs;
 
-    default:
-        break;
-    }
+typedef struct FPU
+{
+    float z_float, x_float, y_float;
+    uint32_t OP_ST, x, y, z;
+} FPU;
 
-    interruptionState = 0;
-}
+int interruptionState = 0;
+int causeOfInterruption = 0;
+int pendente = 0;
+int operacaoPendente;
+int ciclo = 0;
 
 void ISR(uint32_t *MEM32, uint32_t *R)
 {
@@ -79,7 +68,248 @@ void ISR(uint32_t *MEM32, uint32_t *R)
     R[SP] -= 4;
 }
 
-char *strRegistrador(int num, int type)
+void identifiesInterruption(uint8_t causeOfInterruption, uint32_t aux_int, uint32_t *R, FILE *output, char *instrucao, uint32_t *MEM32)
+{
+    switch (causeOfInterruption)
+    {
+    case 2:
+        ISR(MEM32, R);
+        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
+        R[31] |= IV;
+        R[CR] = (R[IR] & (0b111111 << 26)) >> 26;
+        R[IPC] = R[PC];
+        R[PC] = 0x00000004;
+        R[PC] -= 4;
+        interruptionState = 0;
+
+        break;
+    case 3:
+        // divisão por zero
+        ISR(MEM32, R);
+        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
+        R[CR] = 0;
+        R[IPC] = R[PC];
+        R[PC] = 0x00000008;
+        R[PC] -= 4;
+        interruptionState = 0;
+
+        break;
+    case 4:
+        ISR(MEM32, R);
+        R[CR] = aux_int;
+        R[IPC] = R[PC];
+        uint32_t currentPC = R[PC];
+        R[PC] = 0x0000000C;
+        fprintf(output, "0x%08X:\t%-25s\tCR=0x%08X,PC=0x%08X\n", currentPC, instrucao, R[CR], R[PC]);
+        fprintf(output, "[SOFTWARE INTERRUPTION]\n");
+        R[PC] -= 4;
+        interruptionState = 0;
+        break;
+    // watchdogs
+    case 5:
+        ISR(MEM32, R);
+        R[CR] = 0xE1AC04DA;
+        R[IPC] = R[PC] + 4;
+        R[PC] = 0x00000010;
+        R[PC] -= 4;
+        fprintf(output, "[HARDWARE INTERRUPTION 1]\n");
+
+        break;
+    // Erro em operação
+    case 6:
+        ISR(MEM32, R);
+        R[CR] = 0x01EEE754;
+        R[IPC] = R[PC];
+        R[PC] = 0x00000014;
+        R[PC] -= 4;
+        fprintf(output, "[HARDWARE INTERRUPTION 2]\n");
+
+        break;
+    // Operações com tempo variavel
+    case 7:
+        ISR(MEM32, R);
+        R[CR] = 0x01EEE754;
+        R[IPC] = R[PC];
+        R[PC] = 0x00000018;
+        R[PC] -= 4;
+        fprintf(output, "[HARDWARE INTERRUPTION 3]\n");
+
+        break;
+    // Operações com tempo constante
+    case 8:
+        ISR(MEM32, R);
+        R[CR] = 0x01EEE754;
+        R[IPC] = R[PC];
+        R[PC] = 0x0000001C;
+        R[PC] -= 4;
+        fprintf(output, "[HARDWARE INTERRUPTION 4]\n");
+
+        break;
+
+    default:
+        break;
+    }
+}
+
+uint8_t calc_ciclos(FPU *fpu)
+{
+    // Extrair os expoentes (bits 23-30) de x e y
+    uint8_t exp_x = ((uint8_t)fpu->x_float & (0xFF << 23)) >> 23;
+    uint8_t exp_y = ((uint8_t)fpu->y_float & (0xFF << 23)) >> 23;
+
+    int ciclos;
+
+    // Se for uma das operações que têm ciclos fixos
+    uint32_t OP = fpu->OP_ST & 0x1F;
+    if (OP == 0x05 || OP == 0x06 || OP == 0x07 ||
+        OP == 0x08 || OP == 0x09)
+    {
+        ciclos = 1;
+    }
+    else
+    {
+        // Calcular a diferença dos expoentes para outras operações
+        ciclos = abs(exp_x - exp_y) + 1;
+    }
+
+    return ciclos;
+}
+
+uint32_t ceil_custom(float num)
+{
+    int integer_part = (int)num;
+    if (num > (uint32_t)integer_part)
+    {
+        return (uint32_t)(integer_part + 1);
+    }
+    else
+    {
+        return (uint32_t)integer_part;
+    }
+}
+
+uint32_t floor_custom(float num)
+{
+    int integer_part = (int)num;
+
+    if (num < (uint32_t)integer_part)
+    {
+        return (uint32_t)(integer_part - 1);
+    }
+    else
+    {
+        return (uint32_t)integer_part;
+    }
+}
+
+uint32_t round_custom(float num)
+{
+    int integer_part = (int)num;
+    float fraction_part = num - (float)integer_part;
+
+    if (fraction_part >= 0.5)
+    {
+        return (uint32_t)(integer_part + 1);
+    }
+    else if (fraction_part <= -0.5)
+    {
+        return (uint32_t)(integer_part - 1);
+    }
+    else
+    {
+        return (uint32_t)integer_part;
+    }
+}
+
+void calcFPU(FPU *fpu)
+{
+    uint32_t OP = fpu->OP_ST & 0x1F;
+    switch (OP)
+    {
+    case 0b00001:
+        // Adição Z = X + Y
+        fpu->x_float = (float)fpu->x;
+        fpu->y_float = (float)fpu->y;
+        operacaoPendente = 3;
+        fpu->z = fpu->x_float + fpu->y_float;
+        break;
+    case 0b00010:
+        // Subtração Z = X − Y
+        fpu->z = fpu->x - fpu->y;
+        operacaoPendente = 3;
+        break;
+    case 0b00011:
+        // Multiplicação Z = X × Y
+        fpu->z = fpu->x * fpu->y;
+        operacaoPendente = 3;
+        break;
+    case 0b00100:
+        // Divisão Z = X ÷ Y
+        if (fpu->y == 0)
+        {
+            fpu->OP_ST |= 0x20;
+            operacaoPendente = 2;
+        }
+        else
+        {
+            fpu->z = fpu->x / fpu->y;
+            operacaoPendente = 3;
+        }
+
+        break;
+    case 0b00101:
+        // Atribuição X = Z
+        fpu->x = fpu->z;
+        operacaoPendente = 4;
+        break;
+    case 0b00110:
+        // Atribuição Y = Z
+        fpu->y = fpu->z;
+        operacaoPendente = 4;
+        break;
+    case 0b00111:
+        // Teto ⌈Z ⌉
+        operacaoPendente = 4;
+        fpu->z = ceil_custom(fpu->z_float);
+        break;
+    case 0b01000:
+        // Piso ⌊Z ⌋
+        operacaoPendente = 4;
+        fpu->z = floor_custom(fpu->z_float);
+        break;
+    case 0b01001:
+        //  Arredondamento ∥Z ∥
+        operacaoPendente = 4;
+        fpu->z = round_custom(fpu->z_float);
+        break;
+    default:
+        fpu->OP_ST |= 0x20;
+        operacaoPendente = 2;
+        break;
+    }
+}
+
+void watchdogCounter(Watchdogs *watchdog)
+{
+
+    if (watchdog->en)
+    {
+        watchdog->counter--;
+    }
+    else
+    {
+        watchdog->watchdogState = 0;
+    }
+
+    if (watchdog->counter == 0)
+    {
+        watchdog->watchdogState = 0;
+        pendente = 1;
+        operacaoPendente = 1;
+    }
+}
+
+char *strRegistrador(int num, int type, int isSbrCbr)
 {
     char *result = (char *)malloc(10 * sizeof(char));
     if (result == NULL)
@@ -87,8 +317,15 @@ char *strRegistrador(int num, int type)
         return NULL;
     }
 
+    if (isSbrCbr)
+    {
+        snprintf(result, 10, "%c[%d]", type ? 'r' : 'R', num);
+        return result;
+    }
+
     if (num < 26 || num > 31)
     {
+
         snprintf(result, 10, "%c%d", type ? 'r' : 'R', num);
         return result;
     }
@@ -119,7 +356,6 @@ char *strRegistrador(int num, int type)
 
     return result;
 }
-
 int calcQtdRegistradores(int v, int w, int x, int y, int z)
 {
     int resultado = 1;
@@ -166,9 +402,35 @@ int calcQtdRegistradores(int v, int w, int x, int y, int z)
     }
 }
 
-int main(int argc, char *argv[])
+void initFPU(FPU *fpu)
+{
+    fpu->z_float = 0;
+    fpu->y_float = 0;
+    fpu->x_float = 0;
+    fpu->OP_ST = 0;
+    fpu->x = 0;
+    fpu->y = 0;
+    fpu->z = 0;
+}
+
+void initWatchdogs(Watchdogs *watchdog)
+{
+    watchdog->en = 0;
+    watchdog->counter = 0;
+    watchdog->watchdogState = 0;
+}
+
+void initTerminal(Terminal *terminal)
 {
 
+    terminal->buffer = (char *)malloc((32 * 1024) * sizeof(char));
+    terminal->size = 0;
+}
+
+int main(int argc, char *argv[])
+{
+    // FILE *input = fopen(argv[1], "r");
+    // FILE *output = fopen(argv[2], "w");
     FILE *input = fopen("input.txt", "r");
     FILE *output = fopen("output.txt", "w");
     if (input == NULL)
@@ -177,9 +439,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    uint8_t causeOfInterruption = 0;
     uint32_t R[32] = {0};
     uint32_t *MEM32 = (uint32_t *)calloc(32 * 1024, sizeof(uint32_t));
+    Terminal *terminal = malloc(sizeof(Terminal));
+    initTerminal(terminal);
+    Watchdogs *watchdog = malloc(sizeof(Watchdogs));
+    initWatchdogs(watchdog);
+    FPU *fpu = malloc(sizeof(FPU));
+    initFPU(fpu);
 
     if (MEM32 == NULL)
     {
@@ -198,10 +465,9 @@ int main(int argc, char *argv[])
     fprintf(output, "[START OF SIMULATION]\n");
 
     uint8_t executa = 1;
-    int numeroAtual = 0;
+
     while (executa)
     {
-        numeroAtual++;
         char instrucao[30] = {0};
         uint8_t z = 0, x = 0, y = 0, i = 0, l = 0;
         uint32_t pc = R[29], xyl = 0, auxUnsigned32 = 0;
@@ -213,6 +479,14 @@ int main(int argc, char *argv[])
 
         uint8_t opcode = (R[28] & (0b111111 << 26)) >> 26;
 
+        if (watchdog->watchdogState)
+        {
+            if (watchdog->counter != 0)
+            {
+                watchdogCounter(watchdog);
+            }
+        }
+
         switch (opcode)
         {
         // mov
@@ -221,8 +495,8 @@ int main(int argc, char *argv[])
             xyl = R[28] & 0x1FFFFF;
             R[z] = xyl;
 
-            sprintf(instrucao, "mov %s,%u", strRegistrador(z, 1), xyl);
-            fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), xyl);
+            sprintf(instrucao, "mov %s,%u", strRegistrador(z, 1, 0), xyl);
+            fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), xyl);
             break;
 
         // divI
@@ -250,17 +524,17 @@ int main(int argc, char *argv[])
             }
             else
             {
-                R[31] |= ZD;
-
-                if (R[IE])
+                if (R[31] & 0x02)
                 {
+
+                    R[31] |= ZD;
                     interruptionState = 1;
                     causeOfInterruption = 3;
                 }
             }
 
-            sprintf(instrucao, "divi %s,%s,%d", strRegistrador(z, 1), strRegistrador(x, 1), auxSigned32);
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s/0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), auxSigned32, R[z], R[31]);
+            sprintf(instrucao, "divi %s,%s,%d", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), auxSigned32);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s/0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), auxSigned32, R[z], R[31]);
             break;
 
         // movs
@@ -274,9 +548,9 @@ int main(int argc, char *argv[])
 
             R[z] = auxSigned32;
 
-            sprintf(instrucao, "movs %s,%d", strRegistrador(z, 1), auxSigned32);
+            sprintf(instrucao, "movs %s,%d", strRegistrador(z, 1, 0), auxSigned32);
 
-            fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), R[z]);
+            fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), R[z]);
             break;
 
         // add
@@ -324,8 +598,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "add %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s+%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
+            sprintf(instrucao, "add %s,%s,%s", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s+%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(y, 0, 0), R[z], R[31]);
             break;
 
         // addI
@@ -373,8 +647,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "addi %s,%s,%d", strRegistrador(z, 1), strRegistrador(x, 1), (int32_t)aux_addI);
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s+0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), (int32_t)aux_addI, R[z], R[31]);
+            sprintf(instrucao, "addi %s,%s,%d", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), (int32_t)aux_addI);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s+0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), (int32_t)aux_addI, R[z], R[31]);
 
             break;
 
@@ -422,8 +696,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "sub %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s-%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
+            sprintf(instrucao, "sub %s,%s,%s", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s-%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(y, 0, 0), R[z], R[31]);
 
             break;
 
@@ -472,9 +746,9 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "subi %s,%s,%d", strRegistrador(z, 1), strRegistrador(x, 1), (int32_t)aux_i);
+            sprintf(instrucao, "subi %s,%s,%d", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), (int32_t)aux_i);
 
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s-0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), (int32_t)aux_i, R[z], R[31]);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s-0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), (int32_t)aux_i, R[z], R[31]);
             break;
 
         // caso variado
@@ -512,8 +786,8 @@ int main(int argc, char *argv[])
                     R[31] &= ~CY;
                 }
 
-                sprintf(instrucao, "mul %s,%s,%s,%s", strRegistrador(l, 1), strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
-                fprintf(output, "0x%08X:\t%-25s\t%s:%s=%s*%s=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, strRegistrador(l, 0), strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), auxUnsigned64, R[31]);
+                sprintf(instrucao, "mul %s,%s,%s,%s", strRegistrador(l, 1, 0), strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
+                fprintf(output, "0x%08X:\t%-25s\t%s:%s=%s*%s=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, strRegistrador(l, 0, 0), strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(y, 0, 0), auxUnsigned64, R[31]);
                 break;
 
             // sll
@@ -547,8 +821,8 @@ int main(int argc, char *argv[])
                 R[z] = (auxUnsigned64 >> 32) & 0xFFFFFFFF;
                 R[y] = auxUnsigned64 & 0xFFFFFFFF;
 
-                sprintf(instrucao, "sll %s,%s,%s,%u", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(x, 1), l);
-                fprintf(output, "0x%08X:\t%-25s\t%s:%s=%s:%s<<%u=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(z, 0), strRegistrador(x, 0), l + 1, auxUnsigned64, R[31]);
+                sprintf(instrucao, "sll %s,%s,%s,%u", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(x, 1, 0), l);
+                fprintf(output, "0x%08X:\t%-25s\t%s:%s=%s:%s<<%u=0x%016" PRIX64 ",SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), l + 1, auxUnsigned64, R[31]);
                 break;
 
             // muls
@@ -632,18 +906,6 @@ int main(int argc, char *argv[])
                     R[l] = R[x] % R[y],
                     R[z] = R[x] / R[y];
 
-                    if (R[l] != 0)
-                    {
-                        R[31] |= CY;
-                    }
-                    else
-                    {
-                        R[31] &= ~CY;
-                    }
-                }
-                else
-                {
-
                     if (R[z] == 0)
                     {
                         R[31] |= ZN;
@@ -653,21 +915,30 @@ int main(int argc, char *argv[])
                         R[31] &= ~ZN;
                     }
 
-                    if (R[y] == 0)
+                    if (R[l] != 0)
                     {
-                        R[31] |= ZD;
+                        R[31] |= CY;
                     }
                     else
                     {
-                        R[31] &= ~ZD;
-                    }
-
-                    if (R[IE])
-                    {
-                        interruptionState = 1;
-                        causeOfInterruption = 3;
+                        R[31] &= ~CY;
                     }
                 }
+
+                if (R[y] == 0)
+                {
+                    R[31] |= ZD;
+                }
+                else
+                {
+                    R[31] &= ~ZD;
+                }
+
+                // if (R[IE])
+                // {
+                //     interruptionState = 1;
+                //     causeOfInterruption = 3;
+                // }
                 sprintf(instrucao, "div r%u,r%u,r%u,r%u", l, z, x, y);
                 fprintf(output, "0x%08X:\t%-25s\tR%u=R%u%%R%u=0x%08X,R%u=R%u/R%u=0x%08X,SR=0x%08X\n", R[29], instrucao, l, x, y, R[l], z, x, y, R[z], R[31]);
                 break;
@@ -857,8 +1128,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~ZD;
             }
 
-            sprintf(instrucao, "modi r%u,r%u,%d", z, x, aux_modi);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=R%u%%0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, z, x, aux_modi, R[z], R[31]);
+            sprintf(instrucao, "modi %s,%s,%d", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), aux_modi);
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s%%0x%08X=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), aux_modi, R[z], R[31]);
 
             break;
 
@@ -905,7 +1176,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "cmp %s,%s", strRegistrador(x, 1), strRegistrador(y, 1));
+            sprintf(instrucao, "cmp %s,%s", strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
             fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[29], instrucao, R[31]);
 
             break;
@@ -954,7 +1225,7 @@ int main(int argc, char *argv[])
                 R[31] &= ~OV;
             }
 
-            sprintf(instrucao, "cmpi %s,%d", strRegistrador(x, 1), aux_cmpi);
+            sprintf(instrucao, "cmpi %s,%d", strRegistrador(x, 1, 0), aux_cmpi);
             fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[29], instrucao, R[31]);
 
             break;
@@ -985,8 +1256,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "and %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s&%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
+            sprintf(instrucao, "and %s,%s,%s", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s&%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(y, 0, 0), R[z], R[31]);
 
             break;
 
@@ -1016,8 +1287,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "or %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s|%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
+            sprintf(instrucao, "or %s,%s,%s", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s|%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(y, 0, 0), R[z], R[31]);
 
             break;
 
@@ -1046,8 +1317,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "not %s,%s", strRegistrador(z, 1), strRegistrador(x, 1));
-            fprintf(output, "0x%08X:\t%-25s\t%s=~%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), R[z], R[31]);
+            sprintf(instrucao, "not %s,%s", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0));
+            fprintf(output, "0x%08X:\t%-25s\t%s=~%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), R[z], R[31]);
 
             break;
 
@@ -1077,8 +1348,8 @@ int main(int argc, char *argv[])
                 R[31] &= ~SN;
             }
 
-            sprintf(instrucao, "xor %s,%s,%s", strRegistrador(z, 1), strRegistrador(x, 1), strRegistrador(y, 1));
-            fprintf(output, "0x%08X:\t%-25s\t%s=%s^%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0), strRegistrador(x, 0), strRegistrador(y, 0), R[z], R[31]);
+            sprintf(instrucao, "xor %s,%s,%s", strRegistrador(z, 1, 0), strRegistrador(x, 1, 0), strRegistrador(y, 1, 0));
+            fprintf(output, "0x%08X:\t%-25s\t%s=%s^%s=0x%08X,SR=0x%08X\n", R[29], instrucao, strRegistrador(z, 0, 0), strRegistrador(x, 0, 0), strRegistrador(y, 0, 0), R[z], R[31]);
 
             break;
 
@@ -1090,8 +1361,49 @@ int main(int argc, char *argv[])
             uint16_t aux_l8 = R[28] & 0xFFFF;
             auxUnsigned32 = (uint32_t)aux_l8;
 
-            R[z] = (((uint8_t *)(&MEM32[(R[x] + auxUnsigned32) >> 2]))[3 - ((R[x] + auxUnsigned32) % 4)]);
-
+            switch (R[x] + auxUnsigned32)
+            {
+            case COUNTER:
+                R[z] = watchdog->counter;
+                break;
+            case st:
+                R[z] = fpu->OP_ST & 0x3F;
+                break;
+            case op:
+                R[z] = fpu->OP_ST & 0x1F;
+                break;
+            case X:
+            case x_:
+                R[z] = fpu->x;
+                break;
+            case Z:
+            case z_:
+                R[z] = fpu->z;
+                break;
+            case Y:
+            case y_:
+                R[z] = fpu->y;
+                break;
+            case OUT:
+                terminal->buffer[terminal->size] = R[x] + i;
+                terminal->size += 1;
+                break;
+            case IN:
+                R[z] = terminal->buffer[terminal->size];
+                terminal->size += 1;
+                break;
+            default:
+                if (R[x] + i > (32 * 1024))
+                {
+                    executa = 0;
+                    break;
+                }
+                else
+                {
+                    R[z] = (((uint8_t *)(&MEM32[(R[x] + auxUnsigned32) >> 2]))[3 - ((R[x] + auxUnsigned32) % 4)]);
+                }
+                break;
+            }
             sprintf(instrucao, "l8 r%u,[r%u%s%i]", z, x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32);
             fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%02X\n", R[29], instrucao, z, R[x] + auxUnsigned32, R[z]);
 
@@ -1104,7 +1416,45 @@ int main(int argc, char *argv[])
             uint16_t aux_l16 = R[28] & 0xFFFF;
             auxUnsigned32 = (uint32_t)aux_l16;
 
-            R[z] = ((uint16_t *)(&MEM32[(R[x] + auxUnsigned32) >> 1]))[1 - ((R[x] + auxUnsigned32) % 2)];
+            switch (R[x] + auxUnsigned32)
+            {
+            case COUNTER:
+                R[z] = watchdog->counter;
+                break;
+            case st:
+                R[z] = fpu->OP_ST & 0x3F;
+                break;
+            case op:
+                R[z] = fpu->OP_ST & 0x1F;
+                break;
+            case X:
+            case x_:
+                R[z] = fpu->x;
+                break;
+            case Z:
+            case z_:
+                R[z] = fpu->z;
+                break;
+            case Y:
+            case y_:
+                R[z] = fpu->y;
+                break;
+            case OUT:
+                terminal->buffer[terminal->size] = R[x] + i;
+                terminal->size += 1;
+                break;
+            default:
+                if (R[x] + i > (32 * 1024))
+                {
+                    executa = 0;
+                    break;
+                }
+                else
+                {
+                    R[z] = ((uint16_t *)(&MEM32[(R[x] + auxUnsigned32) >> 1]))[1 - ((R[x] + auxUnsigned32) % 2)];
+                }
+                break;
+            }
 
             sprintf(instrucao, "l16 r%u,[r%u%s%i]", z, x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32);
             fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%04X\n", R[29], instrucao, z, (R[x] + auxUnsigned32) << 1, R[z]);
@@ -1117,11 +1467,79 @@ int main(int argc, char *argv[])
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
             i = R[28] & 0xFFFF;
+            uint32_t auxL32 = (R[x] + i) << 2;
+            uint32_t addFinal = 0;
 
-            R[z] = MEM32[R[x] + i];
-
+            switch (auxL32)
+            {
+            case COUNTER:
+                R[z] = watchdog->counter;
+                addFinal = COUNTER;
+                break;
+            case st:
+                R[z] = fpu->OP_ST & 0x3F;
+                addFinal = st;
+                if (fpu->OP_ST & 0x1F)
+                {
+                    ciclo = calc_ciclos(fpu);
+                    calcFPU(fpu);
+                    if (operacaoPendente == 3)
+                        ciclo += 1;
+                }
+                break;
+            case op:
+                R[z] = fpu->OP_ST & 0x1F;
+                addFinal = op;
+                break;
+            case X:
+                addFinal = X;
+                R[z] = fpu->x;
+                break;
+            case x_:
+                R[z] = fpu->x;
+                addFinal = x_;
+                break;
+            case Z:
+                R[z] = fpu->z;
+                addFinal = Z;
+                break;
+            case z_:
+                R[z] = fpu->z;
+                addFinal = z_;
+                break;
+            case Y:
+                R[z] = fpu->y;
+                addFinal = Y;
+                break;
+            case y_:
+                R[z] = fpu->y;
+                addFinal = y_;
+                break;
+            case OUT:
+                terminal->buffer[terminal->size] = R[x] + i;
+                terminal->size += 1;
+                addFinal = OUT;
+                break;
+            case IN:
+                R[z] = terminal->buffer[terminal->size];
+                terminal->size += 1;
+                addFinal = IN;
+                break;
+            default:
+                if (R[x] + i > (32 * 1024))
+                {
+                    executa = 0;
+                    break;
+                }
+                else
+                {
+                    R[z] = MEM32[(R[x] + i)];
+                    addFinal = auxL32;
+                }
+                break;
+            }
             sprintf(instrucao, "l32 r%u,[r%u%s%i]", z, x, (i >= 0) ? ("+") : (""), i);
-            fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%08X\n", R[29], instrucao, z, (R[x] + i) << 2, R[z]);
+            fprintf(output, "0x%08X:\t%-25s\tR%u=MEM[0x%08X]=0x%08X\n", R[29], instrucao, z, addFinal, R[z]);
 
             break;
 
@@ -1132,7 +1550,40 @@ int main(int argc, char *argv[])
             uint16_t aux_s8 = R[28] & 0xFFFF;
             auxUnsigned32 = (uint32_t)aux_s8;
 
-            (((uint8_t *)(&MEM32[(R[x] + auxUnsigned32) >> 2]))[3 - ((R[x] + auxUnsigned32) % 4)]) = R[z];
+            switch (R[x] + auxUnsigned32)
+            {
+            case OUT:
+                terminal->buffer[terminal->size] = R[z] & 0xFF;
+                terminal->size++;
+                break;
+            case IN:
+                terminal->buffer[terminal->size] = R[z] & 0xFF;
+                terminal->size++;
+                break;
+            case st:
+                fpu->OP_ST = R[z] & 0x20;
+                break;
+            case op:
+                fpu->OP_ST = R[z] & 0x1F;
+                break;
+            case X:
+                fpu->x = R[z];
+                break;
+            case Y:
+                fpu->y = R[z];
+                break;
+            case Z:
+                fpu->z = R[z];
+                break;
+            case COUNTER:
+                watchdog->counter = R[z] & 0x7FFFFFFF;
+                watchdog->watchdogState = 1;
+                watchdog->en = (R[z] >> 31) & 0x01;
+                break;
+            default:
+                (((uint8_t *)(&MEM32[(R[x] + auxUnsigned32) >> 2]))[3 - ((R[x] + auxUnsigned32) % 4)]) = R[z];
+                break;
+            }
 
             sprintf(instrucao, "s8 [r%u%s%i],r%u", x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32, z);
             fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%02X\n", R[29], instrucao, R[x] + auxUnsigned32, z, R[z]);
@@ -1146,10 +1597,37 @@ int main(int argc, char *argv[])
             uint16_t aux_s16 = R[28] & 0xFFFF;
             auxUnsigned32 = (uint32_t)aux_s16;
 
-            ((uint16_t *)(&MEM32[(R[x] + auxUnsigned32) >> 1]))[1 - ((R[x] + auxUnsigned32) % 2)] = R[z];
-
+            switch (R[x] + auxUnsigned32)
+            {
+            case OUT:
+                terminal->buffer[terminal->size] = R[z] & 0xFF;
+                terminal->size++;
+                break;
+            case st:
+                fpu->OP_ST = R[z] & 0x20;
+                break;
+            case op:
+                fpu->OP_ST = R[z] & 0x1F;
+                break;
+            case X:
+                fpu->x = R[z];
+                break;
+            case Y:
+                fpu->y = R[z];
+                break;
+            case Z:
+                fpu->z = R[z];
+                break;
+            case COUNTER:
+                watchdog->counter = R[z] & 0x7FFFFFFF;
+                watchdog->watchdogState = 1;
+                watchdog->en = (R[z] >> 31) & 0x01;
+                break;
+            default:
+                ((uint16_t *)(&MEM32[(R[x] + auxUnsigned32) >> 1]))[1 - ((R[x] + auxUnsigned32) % 2)] = R[z];
+                break;
+            }
             sprintf(instrucao, "s16 [r%u%s%i],r%u", x, (auxUnsigned32 >= 0) ? ("+") : (""), auxUnsigned32, z);
-
             fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]=R%u=0x%04X\n", R[29], instrucao, (R[x] + auxUnsigned32) << 1, z, R[z]);
 
             break;
@@ -1159,14 +1637,38 @@ int main(int argc, char *argv[])
             z = (R[28] & (0b11111 << 21)) >> 21;
             x = (R[28] & (0b11111 << 16)) >> 16;
             i = R[28] & 0xFFFF;
+            uint32_t mapeamento = (R[x] + i) << 2;
 
-            if ((R[x] + i) << 2 == COUNTER)
+            switch (mapeamento)
             {
-                watchdog(R[x] + i);
-            }
-            else
-            {
+            case COUNTER:
+                watchdog->counter = R[z] & 0x7FFFFFFF;
+                watchdog->en = (R[z] >> 31) & 0x01;
+                watchdog->watchdogState = 1;
+                break;
+            case X:
+                fpu->x = R[z];
+                break;
+            case Y:
+                fpu->y = R[z];
+                break;
+            case Z:
+                fpu->z = R[z];
+                break;
+            case st:
+                fpu->OP_ST = R[z] & 0x3F;
+                break;
+            case op:
+                fpu->OP_ST = R[z] & 0x1F;
+                break;
+            default:
+                if (R[x] + i > (32 * 1024))
+                {
+                    executa = 0;
+                    break;
+                }
                 MEM32[R[x] + i] = R[z];
+                break;
             }
 
             sprintf(instrucao, "s32 [r%u%s%i],r%u", x, (i >= 0) ? ("+") : (""), i, z);
@@ -1314,28 +1816,32 @@ int main(int argc, char *argv[])
 
         // blt
         case 0b110011:
-            auxSigned32 = (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] >> 25) & 1;
+            aux_mask = auxSigned32 ? 0xFC000000 : 0x00000000;
+            uint32_t aux_blt = aux_mask | (R[28] & 0x3FFFFFF);
 
             if ((R[31] & 1 << 3) != (R[31] & 1 << 4))
             {
-                R[29] = R[29] + (auxSigned32 << 2);
+                R[29] = R[29] + (aux_blt << 2);
             }
 
-            sprintf(instrucao, "blt %i", R[28] & 0x3FFFFFF);
+            sprintf(instrucao, "blt %d", aux_blt);
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
 
         // bne
         case 0b110100:
-            auxSigned32 = (R[28] & 0x3FFFFFF);
+            auxSigned32 = (R[28] >> 25) & 1;
+            aux_mask = auxSigned32 ? 0xFC000000 : 0x00000000;
+            uint32_t aux_bne = aux_mask | (R[28] & 0x3FFFFFF);
 
             if (!(R[31] & 1 << 6))
             {
-                R[29] = R[29] + (auxSigned32 << 2);
+                R[29] = R[29] + (aux_bne << 2);
             }
 
-            sprintf(instrucao, "bne %i", R[28] & 0x3FFFFFF);
+            sprintf(instrucao, "bne %d", aux_bne);
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
@@ -1374,9 +1880,13 @@ int main(int argc, char *argv[])
         case 0b110111:
             pc = R[29];
 
-            R[29] = R[29] + ((R[28] & 0x3FFFFFF) << 2);
+            auxUnsigned32 = (R[28] >> 25) & 1;
+            aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
+            uint32_t auxBun = aux_mask | (R[28] & 0x3FFFFFF);
 
-            sprintf(instrucao, "bun %i", R[28] & 0x3FFFFFF);
+            R[29] += (uint32_t)(auxBun << 2);
+
+            sprintf(instrucao, "bun %i", auxBun);
             fprintf(output, "0x%08X:\t%-25s\tPC=0x%08X\n", pc, instrucao, R[29] + 4);
 
             break;
@@ -1398,6 +1908,7 @@ int main(int argc, char *argv[])
 
         // int
         case 0b111111:
+
             auxUnsigned32 = (R[28] >> 25) & 1;
             aux_mask = auxUnsigned32 ? 0xFC000000 : 0x00000000;
             auxUnsigned32 = aux_mask | (R[28] & 0x3FFFFFF);
@@ -1405,63 +1916,18 @@ int main(int argc, char *argv[])
             if (auxUnsigned32 == 0)
             {
                 executa = 0;
+                interruptionState = 0;
                 sprintf(instrucao, "int 0");
                 fprintf(output, "0x%08X:\t%-25s\tCR=0x00000000,PC=0x00000000\n", R[29], instrucao);
             }
             else
             {
-                interruptionState = 1;
-                causeOfInterruption = 4;
                 sprintf(instrucao, "int %d", auxUnsigned32);
+                identifiesInterruption(4, auxUnsigned32, R, output, instrucao, MEM32);
             }
 
             break;
 
-            // cbr e sbr
-        case 0b100001:
-
-            // cbr
-            if ((R[28] >> 30) & 1)
-            {
-                z = (R[28] & (0b11111 << 21)) >> 21;
-                x = (R[28] & (0b11111 << 16)) >> 16;
-
-                R[z] &= ~(0b1 << x);
-
-                sprintf(instrucao, "cbr sr[%d]", (R[28] >> 30) & 1);
-                fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[PC], instrucao, R[SR]);
-            }
-            else
-            {
-                // sbr
-                z = (R[28] & (0b11111 << 21)) >> 21;
-                x = (R[28] & (0b11111 << 16)) >> 16;
-
-                R[z] |= (0b1 << x);
-                sprintf(instrucao, "sbr sr[%d]", x);
-                fprintf(output, "0x%08X:\t%-25s\tSR=0x%08X\n", R[PC], instrucao, R[SR]);
-            }
-
-            break;
-
-        // reti
-        case 0b100000:
-            auxUnsigned32 = R[SP];
-            uint32_t spAtual = auxUnsigned32;
-            uint32_t pcAtual = R[PC];
-
-            R[SP] += 4;
-            R[IPC] = MEM32[R[SP]];
-
-            R[SP] += 4;
-            R[CR] = MEM32[R[SP]];
-
-            R[SP] += 4;
-            R[PC] = MEM32[R[SP]];
-
-            sprintf(instrucao, "reti");
-            fprintf(output, "0x%08X:\t%-25s\tIPC=MEM[0x%08X]=0x%08X,CR=MEM[0x%08X]=0x%08X,PC=MEM[0x%08X]=0x%08X\n", pcAtual, instrucao, spAtual + 4, MEM32[spAtual + 4], spAtual + 8, MEM32[spAtual + 8], spAtual + 12, MEM32[R[SP]]);
-            R[PC] -= 4;
             break;
 
         // ret
@@ -1473,6 +1939,32 @@ int main(int argc, char *argv[])
 
             sprintf(instrucao, "ret");
             fprintf(output, "0x%08X:\t%-25s\tPC=MEM[0x%08X]=0x%08X\n", auxUnsigned32, instrucao, R[SP], MEM32[R[SP]]);
+            break;
+
+        case 0b100001:
+
+            if (R[28] & 0x1)
+            {
+                // sbr
+                z = (R[28] & (0b11111 << 21)) >> 21;
+                x = (R[28] & (0b11111 << 16)) >> 16;
+
+                R[z] |= (0b1 << x);
+                sprintf(instrucao, "sbr %s[%d]", strRegistrador(z, 1, 0), x);
+                fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[PC], instrucao, strRegistrador(z, 0, 0), R[z]);
+            }
+            else
+            {
+                // cbr
+                z = (R[28] & (0b11111 << 21)) >> 21;
+                x = (R[28] & (0b11111 << 16)) >> 16;
+
+                R[z] &= ~(0b1 << x);
+
+                sprintf(instrucao, "cbr %s[%d]", strRegistrador(z, 1, 0), x);
+                fprintf(output, "0x%08X:\t%-25s\t%s=0x%08X\n", R[PC], instrucao, strRegistrador(z, 0, 0), R[z]);
+            }
+
             break;
 
         // push
@@ -1491,17 +1983,18 @@ int main(int argc, char *argv[])
 
                 char *formatosPush[] = {
                     "",
-                    "push r%d",
-                    "push r%d,r%d",
-                    "push r%d,r%d,r%d",
-                    "push r%d,r%d,r%d,r%d",
-                    "push r%d,r%d,r%d,r%d,r%d"};
+                    "push %s",
+                    "push %s,%s",
+                    "push %s,%s,%s",
+                    "push %s,%s,%s,%s",
+                    "push %s,%s,%s,%s,%s"};
 
-                sprintf(instrucao, formatosPush[qtdRegistradores], regsPush[0], regsPush[1], regsPush[2], regsPush[3], regsPush[4]);
+                sprintf(instrucao, formatosPush[qtdRegistradores], strRegistrador(regsPush[0], 1, 0), strRegistrador(regsPush[1], 1, 0), strRegistrador(regsPush[2], 1, 0), strRegistrador(regsPush[3], 1, 0), strRegistrador(regsPush[4], 1, 0));
                 fprintf(output, "0x%08X:\t%-25s\tMEM[0x%08X]{", R[PC], instrucao, R[SP]);
 
                 for (int i = 0; i < qtdRegistradores; i++)
                 {
+
                     MEM32[R[SP]] = R[regsPush[i]];
                     fprintf(output, "0x%08X", MEM32[R[SP]]);
                     R[SP] -= 4;
@@ -1515,7 +2008,7 @@ int main(int argc, char *argv[])
 
                 for (int i = 0; i < qtdRegistradores; i++)
                 {
-                    fprintf(output, "R%d", regsPush[i]);
+                    fprintf(output, "%s", strRegistrador(regsPush[i], 0, 0));
                     if (i + 1 < qtdRegistradores)
                     {
                         fprintf(output, ",");
@@ -1548,18 +2041,18 @@ int main(int argc, char *argv[])
 
                 char *formatosPop[] = {
                     "",
-                    "pop r%d",
-                    "pop r%d,r%d",
-                    "pop r%d,r%d,r%d",
-                    "pop r%d,r%d,r%d,r%d",
-                    "pop r%d,r%d,r%d,r%d,r%d"};
+                    "pop %s",
+                    "pop %s,%s",
+                    "pop %s,%s,%s",
+                    "pop %s,%s,%s,%s",
+                    "pop %s,%s,%s,%s,%s"};
 
-                sprintf(instrucao, formatosPop[qtdRegistradores_pop], regsPop[0], regsPop[1], regsPop[2], regsPop[3], regsPop[4]);
+                sprintf(instrucao, formatosPop[qtdRegistradores_pop], strRegistrador(regsPop[0], 1, 0), strRegistrador(regsPop[1], 1, 0), strRegistrador(regsPop[2], 1, 0), strRegistrador(regsPop[3], 1, 0), strRegistrador(regsPop[4], 1, 0));
                 fprintf(output, "0x%08X:\t%-25s\t{", R[PC], instrucao);
 
                 for (int i = 0; i < qtdRegistradores_pop; i++)
                 {
-                    fprintf(output, "R%d", regsPop[i]);
+                    fprintf(output, "%s", strRegistrador(regsPop[i], 0, 0));
                     if (i + 1 < qtdRegistradores_pop)
                     {
                         fprintf(output, ",");
@@ -1586,6 +2079,27 @@ int main(int argc, char *argv[])
                 fprintf(output, "0x%08X:\t%-25s\t{}=MEM[0x%08X]{}\n", R[PC], instrucao, R[SP]);
             }
             // return 0;
+            break;
+
+            // reti
+        case 0b100000:
+            uint32_t pcAnterior = R[PC];
+
+            R[SP] += 4;
+            uint32_t ipcAtual = R[SP];
+            R[IPC] = MEM32[ipcAtual];
+
+            R[SP] += 4;
+            uint32_t crAtual = R[SP];
+            R[CR] = MEM32[crAtual];
+
+            R[SP] += 4;
+            uint32_t pcAtual = R[SP];
+            R[PC] = MEM32[pcAtual];
+
+            sprintf(instrucao, "reti");
+            fprintf(output, "0x%08X:\t%-25s\tIPC=MEM[0x%08X]=0x%08X,CR=MEM[0x%08X]=0x%08X,PC=MEM[0x%08X]=0x%08X\n", pcAnterior, instrucao, ipcAtual, R[IPC], crAtual, R[CR], pcAtual, R[PC]);
+            R[PC] -= 4;
             break;
 
         // call tipo S
@@ -1622,17 +2136,60 @@ int main(int argc, char *argv[])
         // Instrucao desconhecida
         default:
             fprintf(output, "[INVALID INSTRUCTION @ 0x%08X]\n", R[29]);
-            interruptionState = 1;
-            causeOfInterruption = 2;
+            identifiesInterruption(2, 0, R, output, instrucao, MEM32);
         }
 
-        if (interruptionState)
+        if (ciclo != 0)
         {
-            ISR(MEM32, R);
-            identifiesInterruption(causeOfInterruption, auxUnsigned32, R, output, instrucao);
+            ciclo--;
+
+            if (!ciclo)
+                pendente = 1;
+        }
+
+        if (R[31] & 0x02)
+        {
+
+            if (pendente)
+            {
+                switch (operacaoPendente)
+                {
+                case 1:
+                    identifiesInterruption(5, 0, R, output, instrucao, MEM32);
+                    fpu->OP_ST &= ~0x1F;
+                    break;
+                case 2:
+                    identifiesInterruption(6, 0, R, output, instrucao, MEM32);
+                    fpu->OP_ST &= ~0x1F;
+                    break;
+                case 3:
+                    identifiesInterruption(7, 0, R, output, instrucao, MEM32);
+                    fpu->OP_ST &= ~0x1F;
+                    break;
+                case 4:
+                    identifiesInterruption(8, 0, R, output, instrucao, MEM32);
+                    fpu->OP_ST &= ~0x1F;
+                    break;
+                default:
+                    break;
+                }
+                pendente = 0;
+            }
+
+            if (interruptionState)
+            {
+
+                identifiesInterruption(causeOfInterruption, 0, R, output, instrucao, MEM32);
+            }
         }
 
         R[29] = R[29] + 4;
+    }
+
+    if (terminal->size > 0)
+    {
+        fprintf(output, "[TERMINAL]\n");
+        fprintf(output, "%s\n", terminal->buffer);
     }
 
     fprintf(output, "[END OF SIMULATION]\n");
@@ -1640,5 +2197,8 @@ int main(int argc, char *argv[])
     fclose(input);
     fclose(output);
     free(MEM32);
+    free(terminal);
+    free(fpu);
+    free(watchdog);
     return 0;
 }
